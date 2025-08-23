@@ -158,9 +158,10 @@ class CSIQBacktester:
                     tech_score * 0.15
                 )
                 
-                # FIXED: Probabilities that sum to 1.0
-                extreme_probabilities = [0.65, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.025, 0.075]
-                extreme_factor = np.random.choice([0, 0, 0, 0, 0, 0, 0, 0.3, -0.3], p=extreme_probabilities)
+                # FIXED: Matching choices and probabilities that sum to 1.0
+                extreme_choices = [0, 0, 0, 0, 0, 0, 0.3, -0.3]
+                extreme_probabilities = [0.15, 0.15, 0.15, 0.15, 0.15, 0.15, 0.1, 0.1]
+                extreme_factor = np.random.choice(extreme_choices, p=extreme_probabilities)
                 csiq = np.clip(csiq_raw + extreme_factor * 100, 0, 100)
                 
                 historical_data.append({
@@ -791,9 +792,10 @@ def main():
         for _ in range(1000):
             # Generate more extreme values
             base_value = np.random.normal(50, 25)
-            # FIXED: Use proper probabilities that sum to 1.0
-            extreme_probabilities = [0.65, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.025, 0.075]
-            extreme_factor = np.random.choice([0, 0, 0, 0, 0, 0, 0, 30, -30], p=extreme_probabilities)
+            # FIXED: Matching choices and probabilities that sum to 1.0
+            extreme_choices = [0, 0, 0, 0, 0, 0, 30, -30]
+            extreme_probabilities = [0.15, 0.15, 0.15, 0.15, 0.15, 0.15, 0.1, 0.1]
+            extreme_factor = np.random.choice(extreme_choices, p=extreme_probabilities)
             csiq = np.clip(base_value + extreme_factor, 0, 100)
             sample_csiq.append(csiq)
         
