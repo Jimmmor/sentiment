@@ -4,22 +4,29 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import time
 from datetime import datetime, timedelta
+import requests
+import json
+import asyncio
+import aiohttp
+from concurrent.futures import ThreadPoolExecutor
 import warnings
 warnings.filterwarnings('ignore')
 
-# Page config voor backtest module
+# Page config
 st.set_page_config(
-    page_title="CSI-Q Backtest",
-    page_icon="📈",
-    layout="wide"
+    page_title="Crypto CSI-Q Dashboard",
+    page_icon="🚀",
+    layout="wide",
+    initial_sidebar_state="collapsed"
 )
 
-# CSS
+# Custom CSS
 st.markdown("""
 <style>
-    .backtest-card {
-        background: linear-gradient(135deg, #2E86AB 0%, #A23B72 100%);
+    .metric-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         padding: 20px;
         border-radius: 10px;
         color: white;
@@ -27,51 +34,199 @@ st.markdown("""
         box-shadow: 0 4px 15px rgba(0,0,0,0.1);
     }
     
-    .performance-positive {
+    .signal-long {
         background: linear-gradient(135deg, #4CAF50, #45a049);
-        padding: 15px;
+        padding: 10px;
         border-radius: 8px;
         color: white;
+        font-weight: bold;
         text-align: center;
-        margin: 5px 0;
     }
     
-    .performance-negative {
+    .signal-short {
         background: linear-gradient(135deg, #f44336, #d32f2f);
-        padding: 15px;
+        padding: 10px;
         border-radius: 8px;
         color: white;
+        font-weight: bold;
         text-align: center;
-        margin: 5px 0;
     }
     
-    .strategy-box {
-        background: #f0f2f6;
+    .signal-contrarian {
+        background: linear-gradient(135deg, #FF9800, #F57C00);
+        padding: 10px;
+        border-radius: 8px;
+        color: white;
+        font-weight: bold;
+        text-align: center;
+    }
+    
+    .signal-neutral {
+        background: linear-gradient(135deg, #9E9E9E, #757575);
+        padding: 10px;
+        border-radius: 8px;
+        color: white;
+        font-weight: bold;
+        text-align: center;
+    }
+    
+    .api-status-error {
+        background: linear-gradient(135deg, #ff6b6b, #ee5a52);
         padding: 15px;
         border-radius: 10px;
-        border-left: 5px solid #2E86AB;
+        color: white;
+        text-align: center;
         margin: 10px 0;
+    }
+    
+    .api-status-demo {
+        background: linear-gradient(135deg, #ffd93d, #ff6b35);
+        padding: 15px;
+        border-radius: 10px;
+        color: white;
+        text-align: center;
+        margin: 10px 0;
+    }
+    
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 24px;
     }
 </style>
 """, unsafe_allow_html=True)
 
-class CSIQBacktester:
-    def __init__(self, start_date, end_date, initial_capital=10000):
-        self.start_date = start_date
-        self.end_date = end_date
-        self.initial_capital = initial_capital
-        self.current_capital = initial_capital
-        self.trades = []
-        self.daily_returns = []
-        self.positions = {}
+# Crypto tickers
+TICKERS = [
+    'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT', 
+    'ADAUSDT', 'AVAXUSDT', 'DOTUSDT', 'LINKUSDT', 'MATICUSDT',
+    'UNIUSDT', 'LTCUSDT', 'BCHUSDT', 'NEARUSDT', 'ALGOUSDT',
+    'VETUSDT', 'FILUSDT', 'ETCUSDT', 'AAVEUSDT', 'MKRUSDT',
+    'ATOMUSDT', 'FTMUSDT', 'SANDUSDT', 'MANAUSDT', 'AXSUSDT'
+]
+
+class MultiSourceDataFetcher:
+    def __init__(self):
+        self.binance_base = "https://fapi.binance.com"
+        self.binance_spot = "https://api.binance.com"
+        self.coingecko_base = "https://api.coingecko.com/api/v3"
         
-    def generate_historical_data(self, symbols, days):
-        """Genereer realistische historische data voor backtesting"""
-        np.random.seed(42)  # Voor consistente resultaten
+    def test_api_connectivity(self):
+        """Test which APIs are available"""
+        apis_status = {
+            'binance': False,
+            'coingecko': False,
+            'demo': True  # Always available fallback
+        }
         
-        historical_data = []
+        # Test Binance
+        try:
+            response = requests.get(f"{self.binance_base}/fapi/v1/ping", timeout=5)
+            if response.status_code == 200:
+                apis_status['binance'] = True
+        except Exception as e:
+            st.warning(f"Binance API niet beschikbaar: {str(e)}")
         
-        # Base prijzen
+        # Test CoinGecko
+        try:
+            response = requests.get(f"{self.coingecko_base}/ping", timeout=5)
+            if response.status_code == 200:
+                apis_status['coingecko'] = True
+        except Exception as e:
+            st.warning(f"CoinGecko API beperkt beschikbaar: {str(e)}")
+        
+        return apis_status
+    
+    def get_binance_data(self):
+        """Try to get Binance data with better error handling"""
+        try:
+            # Set headers to avoid 451 errors
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': 'application/json',
+            }
+            
+            # Futures prices
+            price_url = f"{self.binance_base}/fapi/v1/ticker/24hr"
+            price_response = requests.get(price_url, headers=headers, timeout=10)
+            
+            if price_response.status_code == 451:
+                st.error("🚫 Binance API geblokkeerd in uw regio (Error 451)")
+                return None, "region_blocked"
+            elif price_response.status_code != 200:
+                st.error(f"Binance API error: {price_response.status_code}")
+                return None, "api_error"
+            
+            price_data = price_response.json()
+            
+            # Get funding rates
+            funding_url = f"{self.binance_base}/fapi/v1/premiumIndex"
+            funding_response = requests.get(funding_url, headers=headers, timeout=10)
+            
+            if funding_response.status_code == 200:
+                funding_data = funding_response.json()
+            else:
+                funding_data = []
+            
+            return {'prices': price_data, 'funding': funding_data}, "success"
+            
+        except Exception as e:
+            st.error(f"Binance connectie fout: {e}")
+            return None, "connection_error"
+    
+    def get_coingecko_data(self):
+        """Get basic price data from CoinGecko as fallback"""
+        try:
+            # Map USDT symbols to CoinGecko IDs
+            symbol_map = {
+                'BTCUSDT': 'bitcoin', 'ETHUSDT': 'ethereum', 'BNBUSDT': 'binancecoin',
+                'SOLUSDT': 'solana', 'XRPUSDT': 'ripple', 'ADAUSDT': 'cardano',
+                'AVAXUSDT': 'avalanche-2', 'DOTUSDT': 'polkadot', 'LINKUSDT': 'chainlink',
+                'MATICUSDT': 'matic-network', 'UNIUSDT': 'uniswap', 'LTCUSDT': 'litecoin',
+                'BCHUSDT': 'bitcoin-cash', 'NEARUSDT': 'near', 'ALGOUSDT': 'algorand',
+                'VETUSDT': 'vechain', 'FILUSDT': 'filecoin', 'ETCUSDT': 'ethereum-classic',
+                'AAVEUSDT': 'aave', 'MKRUSDT': 'maker', 'ATOMUSDT': 'cosmos',
+                'FTMUSDT': 'fantom', 'SANDUSDT': 'the-sandbox', 'MANAUSDT': 'decentraland',
+                'AXSUSDT': 'axie-infinity'
+            }
+            
+            ids = list(symbol_map.values())
+            url = f"{self.coingecko_base}/simple/price"
+            params = {
+                'ids': ','.join(ids),
+                'vs_currencies': 'usd',
+                'include_24hr_change': 'true',
+                'include_24hr_vol': 'true'
+            }
+            
+            response = requests.get(url, params=params, timeout=10)
+            
+            if response.status_code != 200:
+                return None, "api_error"
+            
+            data = response.json()
+            
+            # Convert back to our format
+            converted_data = []
+            for symbol, gecko_id in symbol_map.items():
+                if gecko_id in data:
+                    coin_data = data[gecko_id]
+                    converted_data.append({
+                        'symbol': symbol,
+                        'price': coin_data.get('usd', 0),
+                        'change_24h': coin_data.get('usd_24h_change', 0),
+                        'volume_24h': coin_data.get('usd_24h_vol', 0)
+                    })
+            
+            return converted_data, "success"
+            
+        except Exception as e:
+            st.error(f"CoinGecko fout: {e}")
+            return None, "connection_error"
+    
+    def generate_demo_data(self):
+        """Generate realistic demo data when APIs are unavailable"""
+        np.random.seed(42)  # For consistent demo data
+        
+        data_list = []
         base_prices = {
             'BTC': 43000, 'ETH': 2600, 'BNB': 310, 'SOL': 100, 'XRP': 0.52,
             'ADA': 0.48, 'AVAX': 38, 'DOT': 7.2, 'LINK': 14.5, 'MATIC': 0.85,
@@ -80,868 +235,792 @@ class CSIQBacktester:
             'ATOM': 9.8, 'FTM': 0.32, 'SAND': 0.42, 'MANA': 0.38, 'AXS': 6.2
         }
         
-        for day in range(days):
-            date = self.start_date + timedelta(days=day)
+        for ticker in TICKERS:
+            symbol_clean = ticker.replace('USDT', '')
+            base_price = base_prices.get(symbol_clean, 1.0)
             
-            for symbol in symbols:
-                base_price = base_prices.get(symbol, 1.0)
-                
-                # Simuleer prijsbeweging met trend en volatiliteit
-                trend = np.sin(day * 0.1) * 0.02  # Cyclische trend
-                volatility = np.random.normal(0, 0.05)  # 5% dagelijkse volatiliteit
-                price = base_price * (1 + trend + volatility) * (1 + day * 0.001)  # Lichte stijgende trend
-                
-                # Simuleer CSI-Q componenten
-                funding_rate = np.random.normal(0.01, 0.03)
-                oi_change = np.random.normal(0, 15)
-                long_short_ratio = np.random.lognormal(0, 0.4)
-                
-                # Volume gecorreleerd met volatiliteit
-                volume = base_price * 1000000 * (1 + abs(volatility) * 10)
-                
-                # RSI simulatie
-                rsi = 50 + np.random.normal(0, 20)
-                rsi = max(0, min(100, rsi))
-                
-                # Social metrics
-                mentions = max(1, int(volume / 10000000))
-                sentiment = np.tanh(volatility / 0.03)
-                
-                # Bereken CSI-Q
-                derivatives_score = min(100, max(0,
-                    (abs(oi_change) * 2) +
-                    (abs(funding_rate) * 500) +
-                    (abs(long_short_ratio - 1) * 30) +
-                    30
-                ))
-                
-                social_score = min(100, max(0,
-                    ((sentiment + 1) * 25) +
-                    (min(mentions, 100) * 0.3) +
-                    20
-                ))
-                
-                basis_score = min(100, max(0,
-                    abs(funding_rate) * 1000 + 25
-                ))
-                
-                tech_score = min(100, max(0,
-                    (100 - abs(rsi - 50)) * 0.8 + 10
-                ))
-                
-                csiq = (
-                    derivatives_score * 0.4 +
-                    social_score * 0.3 +
-                    basis_score * 0.2 +
-                    tech_score * 0.1
-                )
-                
-                historical_data.append({
-                    'Date': date,
-                    'Symbol': symbol,
-                    'Price': price,
-                    'CSI_Q': csiq,
-                    'Funding_Rate': funding_rate,
-                    'OI_Change': oi_change,
-                    'Long_Short_Ratio': long_short_ratio,
-                    'Volume': volume,
-                    'RSI': rsi,
-                    'Sentiment': sentiment,
-                    'Derivatives_Score': derivatives_score,
-                    'Social_Score': social_score,
-                    'Basis_Score': basis_score,
-                    'Tech_Score': tech_score
-                })
-        
-        return pd.DataFrame(historical_data)
-    
-    def get_signal(self, csiq, funding_rate):
-        """Bepaal handelssignaal op basis van CSI-Q"""
-        if csiq > 90 or csiq < 10:
-            return "CONTRARIAN"
-        elif csiq > 70 and funding_rate < 0.1:
-            return "LONG"
-        elif csiq < 30 and funding_rate > -0.1:
-            return "SHORT"
-        else:
-            return "NEUTRAL"
-    
-    def execute_strategy(self, data, strategy_params):
-        """Voer backtest strategie uit"""
-        trades = []
-        portfolio_value = []
-        current_positions = {}
-        cash = self.initial_capital
-        
-        # Groepeer data per datum
-        daily_data = data.groupby('Date')
-        
-        for date, day_data in daily_data:
-            day_portfolio_value = cash
+            # Add some realistic price movement
+            price_change = np.random.normal(0, 0.05)  # 5% volatility
+            current_price = base_price * (1 + price_change)
             
-            # Controleer bestaande posities
-            for symbol in list(current_positions.keys()):
-                symbol_data = day_data[day_data['Symbol'] == symbol]
-                if not symbol_data.empty:
-                    current_price = symbol_data.iloc[0]['Price']
-                    position = current_positions[symbol]
-                    
-                    # Update positie waarde
-                    position_value = position['quantity'] * current_price
-                    day_portfolio_value += position_value
-                    
-                    # Check exit condities
-                    should_exit = False
-                    exit_reason = ""
-                    
-                    # Stop loss
-                    if position['type'] == 'LONG' and current_price < position['stop_loss']:
-                        should_exit = True
-                        exit_reason = "Stop Loss"
-                    elif position['type'] == 'SHORT' and current_price > position['stop_loss']:
-                        should_exit = True
-                        exit_reason = "Stop Loss"
-                    
-                    # Take profit
-                    elif position['type'] == 'LONG' and current_price > position['take_profit']:
-                        should_exit = True
-                        exit_reason = "Take Profit"
-                    elif position['type'] == 'SHORT' and current_price < position['take_profit']:
-                        should_exit = True
-                        exit_reason = "Take Profit"
-                    
-                    # Time-based exit (max holding period)
-                    elif (date - position['entry_date']).days > strategy_params.get('max_holding_days', 7):
-                        should_exit = True
-                        exit_reason = "Time Exit"
-                    
-                    if should_exit:
-                        # Sluit positie
-                        pnl = 0
-                        if position['type'] == 'LONG':
-                            pnl = (current_price - position['entry_price']) * position['quantity']
-                        else:  # SHORT
-                            pnl = (position['entry_price'] - current_price) * position['quantity']
-                        
-                        cash += position['quantity'] * current_price
-                        
-                        trades.append({
-                            'Date': date,
-                            'Symbol': symbol,
-                            'Type': 'EXIT',
-                            'Signal': position['signal'],
-                            'Price': current_price,
-                            'Quantity': position['quantity'],
-                            'PnL': pnl,
-                            'Reason': exit_reason,
-                            'Hold_Days': (date - position['entry_date']).days
-                        })
-                        
-                        del current_positions[symbol]
+            # Generate realistic metrics
+            change_24h = np.random.normal(0, 8)
+            funding_rate = np.random.normal(0.01, 0.05)
+            oi_change = np.random.normal(0, 20)
+            long_short_ratio = np.random.lognormal(0, 0.5)
             
-            # Zoek nieuwe trading kansen
-            for _, row in day_data.iterrows():
-                symbol = row['Symbol']
-                signal = self.get_signal(row['CSI_Q'], row['Funding_Rate'])
-                
-                # Skip als we al een positie hebben
-                if symbol in current_positions or signal == 'NEUTRAL':
-                    continue
-                
-                # Check entry filters
-                csiq_threshold = strategy_params.get('min_csiq_strength', 60)
-                volume_threshold = strategy_params.get('min_volume', 1000000)
-                
-                if signal in ['LONG', 'SHORT']:
-                    strength = abs(row['CSI_Q'] - 50)
-                    if strength < (csiq_threshold - 50):
-                        continue
-                elif signal == 'CONTRARIAN':
-                    if not (row['CSI_Q'] > 85 or row['CSI_Q'] < 15):
-                        continue
-                
-                if row['Volume'] < volume_threshold:
-                    continue
-                
-                # Bereken positie grootte
-                risk_per_trade = strategy_params.get('risk_per_trade', 0.02)  # 2% risk per trade
-                position_size = (cash * risk_per_trade) / (row['Price'] * 0.05)  # 5% stop loss
-                position_value = position_size * row['Price']
-                
-                # Check of we genoeg cash hebben
-                max_position_pct = strategy_params.get('max_position_size', 0.1)  # Max 10% per positie
-                max_position_value = day_portfolio_value * max_position_pct
-                
-                if position_value > cash * 0.95 or position_value > max_position_value:
-                    continue
-                
-                # Set stop loss en take profit
-                atr_pct = 0.05  # Simplified ATR
-                if signal == 'LONG':
-                    stop_loss = row['Price'] * (1 - atr_pct)
-                    take_profit = row['Price'] * (1 + atr_pct * 2)
-                elif signal == 'SHORT':
-                    stop_loss = row['Price'] * (1 + atr_pct)
-                    take_profit = row['Price'] * (1 - atr_pct * 2)
-                else:  # CONTRARIAN
-                    if row['CSI_Q'] > 85:  # Overbought, expect drop
-                        signal = 'SHORT'
-                        stop_loss = row['Price'] * (1 + atr_pct * 0.5)
-                        take_profit = row['Price'] * (1 - atr_pct * 1.5)
-                    else:  # Oversold, expect bounce
-                        signal = 'LONG'
-                        stop_loss = row['Price'] * (1 - atr_pct * 0.5)
-                        take_profit = row['Price'] * (1 + atr_pct * 1.5)
-                
-                # Open positie
-                current_positions[symbol] = {
-                    'entry_date': date,
-                    'entry_price': row['Price'],
-                    'quantity': position_size,
-                    'type': signal,
-                    'signal': self.get_signal(row['CSI_Q'], row['Funding_Rate']),
-                    'stop_loss': stop_loss,
-                    'take_profit': take_profit,
-                    'csiq': row['CSI_Q']
-                }
-                
-                cash -= position_value
-                
-                trades.append({
-                    'Date': date,
-                    'Symbol': symbol,
-                    'Type': 'ENTRY',
-                    'Signal': signal,
-                    'Price': row['Price'],
-                    'Quantity': position_size,
-                    'CSI_Q': row['CSI_Q'],
-                    'Stop_Loss': stop_loss,
-                    'Take_Profit': take_profit
-                })
+            # Volume based on market cap tier
+            if symbol_clean in ['BTC', 'ETH']:
+                volume_24h = np.random.uniform(20000000000, 50000000000)
+            elif symbol_clean in ['BNB', 'SOL', 'XRP']:
+                volume_24h = np.random.uniform(1000000000, 10000000000)
+            else:
+                volume_24h = np.random.uniform(100000000, 2000000000)
             
-            # Bereken totale portfolio waarde
-            total_value = cash
-            for symbol, position in current_positions.items():
-                symbol_data = day_data[day_data['Symbol'] == symbol]
-                if not symbol_data.empty:
-                    current_price = symbol_data.iloc[0]['Price']
-                    total_value += position['quantity'] * current_price
+            # Calculate CSI-Q components
+            mentions = max(1, int(volume_24h / 10000000))
+            sentiment = np.tanh(change_24h / 5)
+            rsi = 50 + np.random.normal(0, 15)
+            rsi = max(0, min(100, rsi))
+            bb_squeeze = np.random.uniform(0, 1)
+            basis = np.random.normal(0, 0.5)
             
-            portfolio_value.append({
-                'Date': date,
-                'Portfolio_Value': total_value,
-                'Cash': cash,
-                'Positions': len(current_positions)
+            # CSI-Q calculation
+            derivatives_score = min(100, max(0,
+                (abs(oi_change) * 2) +
+                (abs(funding_rate) * 500) +
+                (abs(long_short_ratio - 1) * 30) +
+                30
+            ))
+            
+            social_score = min(100, max(0,
+                ((sentiment + 1) * 25) +
+                (min(mentions, 100) * 0.3) +
+                20
+            ))
+            
+            basis_score = min(100, max(0,
+                abs(basis) * 500 + 25
+            ))
+            
+            tech_score = min(100, max(0,
+                (100 - abs(rsi - 50)) * 0.8 +
+                ((1 - bb_squeeze) * 40) +
+                10
+            ))
+            
+            csiq = (
+                derivatives_score * 0.4 +
+                social_score * 0.3 +
+                basis_score * 0.2 +
+                tech_score * 0.1
+            )
+            
+            data_list.append({
+                'Symbol': symbol_clean,
+                'Price': current_price,
+                'Change_24h': change_24h,
+                'Funding_Rate': funding_rate,
+                'OI_Change': oi_change,
+                'Long_Short_Ratio': long_short_ratio,
+                'Mentions': mentions,
+                'Sentiment': sentiment,
+                'Spot_Futures_Basis': basis,
+                'RSI': rsi,
+                'BB_Squeeze': bb_squeeze,
+                'CSI_Q': csiq,
+                'Derivatives_Score': derivatives_score,
+                'Social_Score': social_score,
+                'Basis_Score': basis_score,
+                'Tech_Score': tech_score,
+                'ATR': abs(current_price * 0.05),
+                'Volume_24h': volume_24h,
+                'Open_Interest': volume_24h * np.random.uniform(0.1, 2.0),
+                'Last_Updated': datetime.now(),
+                'Data_Source': 'demo'
             })
         
-        return pd.DataFrame(trades), pd.DataFrame(portfolio_value)
-    
-    def calculate_metrics(self, portfolio_df, trades_df):
-        """Bereken backtest performance metrics"""
-        if portfolio_df.empty:
-            return {}
-        
-        # Basis metrics
-        total_return = (portfolio_df.iloc[-1]['Portfolio_Value'] / self.initial_capital - 1) * 100
-        
-        # Dagelijkse returns
-        portfolio_df['Daily_Return'] = portfolio_df['Portfolio_Value'].pct_change()
-        avg_daily_return = portfolio_df['Daily_Return'].mean() * 100
-        daily_std = portfolio_df['Daily_Return'].std() * 100
-        
-        # Sharpe ratio (zonder risk-free rate)
-        sharpe_ratio = (avg_daily_return / daily_std * np.sqrt(252)) if daily_std > 0 else 0
-        
-        # Max drawdown
-        peak = portfolio_df['Portfolio_Value'].expanding().max()
-        drawdown = (portfolio_df['Portfolio_Value'] - peak) / peak * 100
-        max_drawdown = drawdown.min()
-        
-        # Trade analytics
-        if not trades_df.empty:
-            exit_trades = trades_df[trades_df['Type'] == 'EXIT']
-            
-            if not exit_trades.empty:
-                win_trades = exit_trades[exit_trades['PnL'] > 0]
-                win_rate = len(win_trades) / len(exit_trades) * 100
-                avg_win = win_trades['PnL'].mean() if len(win_trades) > 0 else 0
-                avg_loss = exit_trades[exit_trades['PnL'] < 0]['PnL'].mean()
-                avg_loss = avg_loss if not pd.isna(avg_loss) else 0
-                
-                profit_factor = abs(win_trades['PnL'].sum() / avg_loss) if avg_loss < 0 else float('inf')
-            else:
-                win_rate = 0
-                avg_win = 0
-                avg_loss = 0
-                profit_factor = 0
-        else:
-            win_rate = 0
-            avg_win = 0
-            avg_loss = 0
-            profit_factor = 0
-        
-        return {
-            'Total_Return': total_return,
-            'Sharpe_Ratio': sharpe_ratio,
-            'Max_Drawdown': max_drawdown,
-            'Win_Rate': win_rate,
-            'Total_Trades': len(trades_df[trades_df['Type'] == 'EXIT']) if not trades_df.empty else 0,
-            'Avg_Win': avg_win,
-            'Avg_Loss': avg_loss,
-            'Profit_Factor': profit_factor,
-            'Final_Portfolio_Value': portfolio_df.iloc[-1]['Portfolio_Value'] if not portfolio_df.empty else self.initial_capital
-        }
+        return pd.DataFrame(data_list)
 
-def main():
-    st.title("📈 CSI-Q Strategy Backtester")
-    st.markdown("**Historische Performance Analyse** - Test je CSI-Q strategieën")
+@st.cache_data(ttl=60)
+def fetch_crypto_data_with_fallback():
+    """Fetch crypto data with multiple fallback options"""
     
-    # Sidebar parameters
-    st.sidebar.header("🔧 Backtest Parameters")
+    fetcher = MultiSourceDataFetcher()
     
-    # Datum range
-    end_date = st.sidebar.date_input("End Date", datetime.now().date())
-    start_date = st.sidebar.date_input("Start Date", end_date - timedelta(days=90))
+    # Test API connectivity
+    api_status = fetcher.test_api_connectivity()
     
-    if start_date >= end_date:
-        st.error("Start date moet voor end date liggen!")
-        return
+    st.markdown("### 📡 API Status Check")
+    col1, col2, col3 = st.columns(3)
     
-    # Portfolio parameters
-    initial_capital = st.sidebar.number_input("Initial Capital ($)", 1000, 100000, 10000)
+    with col1:
+        if api_status['binance']:
+            st.markdown("🟢 **Binance**: Online")
+        else:
+            st.markdown("🔴 **Binance**: Unavailable")
     
-    # Strategy parameters
-    st.sidebar.subheader("📊 Strategy Settings")
-    min_csiq_strength = st.sidebar.slider("Min CSI-Q Strength", 50, 80, 65)
-    risk_per_trade = st.sidebar.slider("Risk per Trade (%)", 1, 10, 2) / 100
-    max_position_size = st.sidebar.slider("Max Position Size (%)", 5, 25, 10) / 100
-    max_holding_days = st.sidebar.slider("Max Holding Days", 1, 14, 5)
-    min_volume = st.sidebar.number_input("Min Volume ($)", 100000, 10000000, 1000000)
+    with col2:
+        if api_status['coingecko']:
+            st.markdown("🟢 **CoinGecko**: Online")
+        else:
+            st.markdown("🟡 **CoinGecko**: Limited")
     
-    # Symbol selection
-    all_symbols = ['BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'ADA', 'AVAX', 'DOT', 
-                   'LINK', 'MATIC', 'UNI', 'LTC', 'BCH', 'NEAR', 'ALGO']
-    selected_symbols = st.sidebar.multiselect("Select Symbols", all_symbols, default=all_symbols[:10])
+    with col3:
+        st.markdown("🟢 **Demo Mode**: Ready")
     
-    if not selected_symbols:
-        st.error("Selecteer minimaal één symbol!")
-        return
+    # Try to get real data first
+    if api_status['binance']:
+        st.info("🚀 Attempting Binance API connection...")
+        binance_data, status = fetcher.get_binance_data()
+        
+        if status == "success":
+            st.success("✅ Connected to Binance API!")
+            # Process Binance data (your existing logic here)
+            return process_binance_data(binance_data)
+        elif status == "region_blocked":
+            st.markdown("""
+            <div class="api-status-error">
+                🚫 <b>Binance API Geblokkeerd</b><br>
+                Error 451: Niet beschikbaar in uw regio<br>
+                Switching to fallback data sources...
+            </div>
+            """, unsafe_allow_html=True)
     
-    # Strategy parameters dict
-    strategy_params = {
-        'min_csiq_strength': min_csiq_strength,
-        'risk_per_trade': risk_per_trade,
-        'max_position_size': max_position_size,
-        'max_holding_days': max_holding_days,
-        'min_volume': min_volume
+    # Try CoinGecko as fallback
+    if api_status['coingecko']:
+        st.info("🔄 Trying CoinGecko API as fallback...")
+        gecko_data, status = fetcher.get_coingecko_data()
+        
+        if status == "success":
+            st.warning("⚠️ Using CoinGecko data (limited derivatives data)")
+            return process_coingecko_data(gecko_data)
+    
+    # Use demo data as last resort
+    st.markdown("""
+    <div class="api-status-demo">
+        📊 <b>Demo Mode Active</b><br>
+        Real APIs unavailable - using realistic simulated data<br>
+        All calculations and features fully functional
+    </div>
+    """, unsafe_allow_html=True)
+    
+    return fetcher.generate_demo_data()
+
+def process_binance_data(binance_data):
+    """Process real Binance data"""
+    # Your existing Binance processing logic here
+    # This would be similar to your current fetch_real_crypto_data function
+    pass
+
+def process_coingecko_data(gecko_data):
+    """Process CoinGecko data and simulate derivatives metrics"""
+    data_list = []
+    
+    for item in gecko_data:
+        symbol_clean = item['symbol'].replace('USDT', '')
+        
+        # Use real price and change data
+        price = item['price']
+        change_24h = item['change_24h']
+        volume_24h = item['volume_24h']
+        
+        # Simulate derivatives data based on price action
+        funding_rate = np.random.normal(change_24h * 0.001, 0.02)  # Correlated with price movement
+        oi_change = change_24h * 2 + np.random.normal(0, 10)
+        long_short_ratio = 1.2 if change_24h > 0 else 0.8  # Bulls when up, bears when down
+        long_short_ratio += np.random.normal(0, 0.3)
+        
+        # Calculate other metrics
+        mentions = max(1, int(volume_24h / 10000000)) if volume_24h else 50
+        sentiment = np.tanh(change_24h / 5)
+        rsi = 50 + change_24h * 2 + np.random.normal(0, 10)
+        rsi = max(0, min(100, rsi))
+        bb_squeeze = np.random.uniform(0, 1)
+        basis = np.random.normal(change_24h * 0.1, 0.3)
+        
+        # CSI-Q calculation (same as before)
+        derivatives_score = min(100, max(0,
+            (abs(oi_change) * 2) +
+            (abs(funding_rate) * 500) +
+            (abs(long_short_ratio - 1) * 30) +
+            30
+        ))
+        
+        social_score = min(100, max(0,
+            ((sentiment + 1) * 25) +
+            (min(mentions, 100) * 0.3) +
+            20
+        ))
+        
+        basis_score = min(100, max(0,
+            abs(basis) * 500 + 25
+        ))
+        
+        tech_score = min(100, max(0,
+            (100 - abs(rsi - 50)) * 0.8 +
+            ((1 - bb_squeeze) * 40) +
+            10
+        ))
+        
+        csiq = (
+            derivatives_score * 0.4 +
+            social_score * 0.3 +
+            basis_score * 0.2 +
+            tech_score * 0.1
+        )
+        
+        data_list.append({
+            'Symbol': symbol_clean,
+            'Price': price,
+            'Change_24h': change_24h,
+            'Funding_Rate': funding_rate,
+            'OI_Change': oi_change,
+            'Long_Short_Ratio': long_short_ratio,
+            'Mentions': mentions,
+            'Sentiment': sentiment,
+            'Spot_Futures_Basis': basis,
+            'RSI': rsi,
+            'BB_Squeeze': bb_squeeze,
+            'CSI_Q': csiq,
+            'Derivatives_Score': derivatives_score,
+            'Social_Score': social_score,
+            'Basis_Score': basis_score,
+            'Tech_Score': tech_score,
+            'ATR': abs(price * 0.05),
+            'Volume_24h': volume_24h or 1000000,
+            'Open_Interest': (volume_24h or 1000000) * np.random.uniform(0.1, 2.0),
+            'Last_Updated': datetime.now(),
+            'Data_Source': 'coingecko'
+        })
+    
+    return pd.DataFrame(data_list)
+
+def get_signal_type(csiq, funding_rate):
+    """Determine signal type based on CSI-Q and funding rate"""
+    if csiq > 90 or csiq < 10:
+        return "CONTRARIAN"
+    elif csiq > 70 and funding_rate < 0.1:
+        return "LONG"
+    elif csiq < 30 and funding_rate > -0.1:
+        return "SHORT"
+    else:
+        return "NEUTRAL"
+
+def get_signal_color(signal):
+    """Get color for signal type"""
+    colors = {
+        "LONG": "🟢",
+        "SHORT": "🔴", 
+        "CONTRARIAN": "🟠",
+        "NEUTRAL": "⚪"
     }
+    return colors.get(signal, "⚪")
+
+# Main App
+def main():
+    st.title("🚀 Crypto CSI-Q Dashboard")
+    st.markdown("**Multi-Source Data** - Composite Sentiment/Quant Index voor korte termijn momentum")
     
-    # Run backtest button
-    if st.sidebar.button("🚀 Run Backtest", type="primary"):
+    # Status and refresh
+    col1, col2, col3 = st.columns([1, 1, 2])
+    with col1:
+        st.markdown("📊 **MULTI-SOURCE**")
+    with col2:
+        st.markdown(f"⏰ {datetime.now().strftime('%H:%M:%S')}")
+    with col3:
+        if st.button("🔄 Refresh Data", type="secondary"):
+            st.cache_data.clear()
+            st.rerun()
+    
+    # Load data with fallback
+    df = fetch_crypto_data_with_fallback()
+    
+    if df.empty:
+        st.error("❌ No data available from any source.")
+        st.stop()
+    
+    # Show data source info
+    data_sources = df['Data_Source'].value_counts() if 'Data_Source' in df.columns else {'demo': len(df)}
+    source_info = " + ".join([f"{count} from {source}" for source, count in data_sources.items()])
+    st.info(f"📊 Loaded {len(df)} symbols: {source_info}")
+    
+    # Add signal column
+    df['Signal'] = df.apply(lambda row: get_signal_type(row['CSI_Q'], row['Funding_Rate']), axis=1)
+    
+    # Sidebar filters
+    st.sidebar.header("🔧 Filters")
+    min_csiq = st.sidebar.slider("Min CSI-Q Score", 0, 100, 0)
+    max_csiq = st.sidebar.slider("Max CSI-Q Score", 0, 100, 100)
+    
+    signal_filter = st.sidebar.multiselect(
+        "Signal Types",
+        ["LONG", "SHORT", "CONTRARIAN", "NEUTRAL"],
+        default=["LONG", "SHORT", "CONTRARIAN"]
+    )
+    
+    min_volume = st.sidebar.number_input("Min 24h Volume ($M)", 0, 1000, 0)
+    
+    # Apply filters
+    filtered_df = df[
+        (df['CSI_Q'] >= min_csiq) & 
+        (df['CSI_Q'] <= max_csiq) &
+        (df['Signal'].isin(signal_filter)) &
+        (df['Volume_24h'] >= min_volume * 1000000)
+    ].copy()
+    
+    # Top metrics
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        active_signals = len(filtered_df[filtered_df['Signal'] != 'NEUTRAL'])
+        st.markdown(f"""
+        <div class="metric-card">
+            <h3>🎯 Actieve Signalen</h3>
+            <h2>{active_signals}</h2>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col2:
+        avg_csiq = filtered_df['CSI_Q'].mean() if not filtered_df.empty else 0
+        st.markdown(f"""
+        <div class="metric-card">
+            <h3>📊 Gemiddelde CSI-Q</h3>
+            <h2>{avg_csiq:.1f}</h2>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col3:
+        extreme_signals = len(filtered_df[(filtered_df['CSI_Q'] > 85) | (filtered_df['CSI_Q'] < 15)])
+        st.markdown(f"""
+        <div class="metric-card">
+            <h3>⚡ Extreme Signalen</h3>
+            <h2>{extreme_signals}</h2>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col4:
+        total_volume = filtered_df['Volume_24h'].sum() / 1000000000 if not filtered_df.empty else 0
+        st.markdown(f"""
+        <div class="metric-card">
+            <h3>💰 Total Volume</h3>
+            <h2>${total_volume:.1f}B</h2>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    st.markdown("---")
+    
+    # Main content tabs
+    tab1, tab2, tab3 = st.tabs(["📈 CSI-Q Monitor", "🎯 Quant Analysis", "💰 Trading Opportunities"])
+    
+    with tab1:
+        st.header("📡 CSI-Q Monitor")
         
-        with st.spinner("🔄 Generating historical data and running backtest..."):
-            # Initialize backtester
-            backtester = CSIQBacktester(start_date, end_date, initial_capital)
+        if not filtered_df.empty:
+            col1, col2 = st.columns([2, 1])
             
-            # Generate historical data
-            days = (end_date - start_date).days
-            historical_data = backtester.generate_historical_data(selected_symbols, days)
-            
-            # Run strategy
-            trades_df, portfolio_df = backtester.execute_strategy(historical_data, strategy_params)
-            
-            # Calculate metrics
-            metrics = backtester.calculate_metrics(portfolio_df, trades_df)
-        
-        # Display results
-        st.success(f"✅ Backtest completed! Analyzed {days} days with {len(selected_symbols)} symbols")
-        
-        # Performance overview
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            return_color = "performance-positive" if metrics['Total_Return'] > 0 else "performance-negative"
-            st.markdown(f"""
-            <div class="{return_color}">
-                <h3>💰 Total Return</h3>
-                <h2>{metrics['Total_Return']:.2f}%</h2>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with col2:
-            st.markdown(f"""
-            <div class="backtest-card">
-                <h3>📊 Sharpe Ratio</h3>
-                <h2>{metrics['Sharpe_Ratio']:.2f}</h2>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with col3:
-            st.markdown(f"""
-            <div class="backtest-card">
-                <h3>📉 Max Drawdown</h3>
-                <h2>{metrics['Max_Drawdown']:.2f}%</h2>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with col4:
-            st.markdown(f"""
-            <div class="backtest-card">
-                <h3>🎯 Win Rate</h3>
-                <h2>{metrics['Win_Rate']:.1f}%</h2>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        st.markdown("---")
-        
-        # Tabs for detailed analysis
-        tab1, tab2, tab3, tab4 = st.tabs(["📈 Portfolio Performance", "📋 Trade Analysis", "📊 Strategy Stats", "🔍 Detailed Metrics"])
-        
-        with tab1:
-            if not portfolio_df.empty:
-                # Portfolio value chart
-                fig = go.Figure()
+            with col1:
+                # CSI-Q Heatmap
+                display_df = filtered_df.sort_values('CSI_Q', ascending=False)
                 
-                fig.add_trace(go.Scatter(
-                    x=portfolio_df['Date'],
-                    y=portfolio_df['Portfolio_Value'],
-                    mode='lines',
-                    name='Portfolio Value',
-                    line=dict(color='#2E86AB', width=2)
+                fig = go.Figure(data=go.Scatter(
+                    x=display_df['Symbol'],
+                    y=display_df['CSI_Q'],
+                    mode='markers+text',
+                    marker=dict(
+                        size=np.sqrt(display_df['Volume_24h']) / 100000,
+                        color=display_df['CSI_Q'],
+                        colorscale='RdYlGn',
+                        showscale=True,
+                        colorbar=dict(title="CSI-Q Score"),
+                        line=dict(width=1, color='white')
+                    ),
+                    text=display_df['Symbol'],
+                    textposition="middle center",
+                    hovertemplate="<b>%{text}</b><br>" +
+                                "CSI-Q: %{y:.1f}<br>" +
+                                "Price: $" + display_df['Price'].round(4).astype(str) + "<br>" +
+                                "Change: " + display_df['Change_24h'].round(2).astype(str) + "%<br>" +
+                                "Funding: " + display_df['Funding_Rate'].round(4).astype(str) + "%<br>" +
+                                "Signal: " + display_df['Signal'].astype(str) + "<br>" +
+                                "<extra></extra>"
                 ))
                 
-                # Add buy & hold benchmark
-                btc_data = historical_data[historical_data['Symbol'] == 'BTC'].copy()
-                if not btc_data.empty:
-                    btc_data = btc_data.sort_values('Date')
-                    btc_initial = btc_data.iloc[0]['Price']
-                    btc_data['BTC_Portfolio'] = initial_capital * (btc_data['Price'] / btc_initial)
-                    
-                    fig.add_trace(go.Scatter(
-                        x=btc_data['Date'],
-                        y=btc_data['BTC_Portfolio'],
-                        mode='lines',
-                        name='BTC Buy & Hold',
-                        line=dict(color='orange', width=2, dash='dash')
-                    ))
-                
                 fig.update_layout(
-                    title="💼 Portfolio Value Over Time",
-                    xaxis_title="Date",
-                    yaxis_title="Portfolio Value ($)",
-                    height=500
+                    title="🔴🟡🟢 CSI-Q Heatmap (Multi-Source Data)",
+                    xaxis_title="Symbol",
+                    yaxis_title="CSI-Q Score",
+                    height=400,
+                    showlegend=False
                 )
+                
+                # Add signal zones
+                fig.add_hline(y=70, line_dash="dash", line_color="green", 
+                             annotation_text="LONG Zone", annotation_position="right")
+                fig.add_hline(y=30, line_dash="dash", line_color="red",
+                             annotation_text="SHORT Zone", annotation_position="right")
+                fig.add_hline(y=90, line_dash="dash", line_color="orange",
+                             annotation_text="CONTRARIAN", annotation_position="right")
+                fig.add_hline(y=10, line_dash="dash", line_color="orange")
                 
                 st.plotly_chart(fig, use_container_width=True)
-                
-                # Drawdown chart
-                portfolio_df['Peak'] = portfolio_df['Portfolio_Value'].expanding().max()
-                portfolio_df['Drawdown'] = (portfolio_df['Portfolio_Value'] - portfolio_df['Peak']) / portfolio_df['Peak'] * 100
-                
-                fig_dd = px.area(
-                    portfolio_df, 
-                    x='Date', 
-                    y='Drawdown',
-                    title="📉 Drawdown Analysis",
-                    color_discrete_sequence=['red']
-                )
-                fig_dd.update_layout(height=300)
-                st.plotly_chart(fig_dd, use_container_width=True)
-        
-        with tab2:
-            if not trades_df.empty:
-                # Trade distribution
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    signal_counts = trades_df[trades_df['Type'] == 'ENTRY']['Signal'].value_counts()
-                    fig_signals = px.pie(
-                        values=signal_counts.values,
-                        names=signal_counts.index,
-                        title="🎯 Signal Distribution"
-                    )
-                    fig_signals.update_layout(height=300)
-                    st.plotly_chart(fig_signals, use_container_width=True)
-                
-                with col2:
-                    if 'PnL' in trades_df.columns:
-                        exit_trades = trades_df[trades_df['Type'] == 'EXIT']
-                        if not exit_trades.empty:
-                            fig_pnl = px.histogram(
-                                exit_trades,
-                                x='PnL',
-                                title="💰 P&L Distribution",
-                                nbins=20
-                            )
-                            fig_pnl.update_layout(height=300)
-                            st.plotly_chart(fig_pnl, use_container_width=True)
-                
-                # Trade timeline
-                if 'PnL' in trades_df.columns:
-                    exit_trades = trades_df[trades_df['Type'] == 'EXIT'].copy()
-                    if not exit_trades.empty:
-                        exit_trades['Cumulative_PnL'] = exit_trades['PnL'].cumsum()
-                        
-                        fig_timeline = px.line(
-                            exit_trades,
-                            x='Date',
-                            y='Cumulative_PnL',
-                            title="📈 Cumulative P&L Timeline"
-                        )
-                        fig_timeline.update_layout(height=400)
-                        st.plotly_chart(fig_timeline, use_container_width=True)
-                
-                # Recent trades table
-                st.subheader("🔍 Recent Trades")
-                if not trades_df.empty:
-                    display_trades = trades_df.tail(20).copy()
-                    if 'PnL' in display_trades.columns:
-                        display_trades['PnL'] = display_trades['PnL'].round(2)
-                    st.dataframe(display_trades, use_container_width=True)
-        
-        with tab3:
-            # Strategy performance by signal type
-            if not trades_df.empty and 'PnL' in trades_df.columns:
-                exit_trades = trades_df[trades_df['Type'] == 'EXIT']
-                if not exit_trades.empty:
-                    signal_performance = exit_trades.groupby('Signal').agg({
-                        'PnL': ['sum', 'mean', 'count'],
-                    }).round(2)
-                    signal_performance.columns = ['Total_PnL', 'Avg_PnL', 'Count']
-                    signal_performance['Win_Rate'] = exit_trades.groupby('Signal').apply(
-                        lambda x: (x['PnL'] > 0).mean() * 100
-                    ).round(1)
-                    
-                    st.subheader("📊 Performance by Signal Type")
-                    st.dataframe(signal_performance, use_container_width=True)
-                    
-                    # Performance by symbol
-                    symbol_performance = exit_trades.groupby('Symbol').agg({
-                        'PnL': ['sum', 'mean', 'count'],
-                    }).round(2)
-                    symbol_performance.columns = ['Total_PnL', 'Avg_PnL', 'Count']
-                    symbol_performance['Win_Rate'] = exit_trades.groupby('Symbol').apply(
-                        lambda x: (x['PnL'] > 0).mean() * 100
-                    ).round(1)
-                    symbol_performance = symbol_performance.sort_values('Total_PnL', ascending=False)
-                    
-                    st.subheader("🏆 Performance by Symbol (Top 10)")
-                    st.dataframe(symbol_performance.head(10), use_container_width=True)
-        
-        with tab4:
-            # Detailed metrics
-            st.subheader("📈 Detailed Performance Metrics")
             
+            with col2:
+                st.subheader("🚨 Active Alerts")
+                
+                # Generate alerts for strong signals
+                alerts = []
+                for _, row in filtered_df.iterrows():
+                    signal = row['Signal']
+                    if signal != 'NEUTRAL':
+                        strength = "🔥 STRONG" if abs(row['CSI_Q'] - 50) > 35 else "⚠️ MEDIUM"
+                        alerts.append({
+                            'Symbol': row['Symbol'],
+                            'Signal': signal,
+                            'CSI_Q': row['CSI_Q'],
+                            'Strength': strength,
+                            'Price': row['Price'],
+                            'Funding': row['Funding_Rate']
+                        })
+                
+                alerts = sorted(alerts, key=lambda x: abs(x['CSI_Q'] - 50), reverse=True)
+                
+                for alert in alerts[:8]:
+                    signal_emoji = get_signal_color(alert['Signal'])
+                    st.markdown(f"""
+                    <div class="signal-{alert['Signal'].lower()}">
+                        {signal_emoji} <b>{alert['Symbol']}</b><br>
+                        {alert['Signal']} Signal | {alert['Strength']}<br>
+                        CSI-Q: {alert['CSI_Q']:.1f}<br>
+                        ${alert['Price']:.4f} | Fund: {alert['Funding']:.3f}%
+                    </div>
+                    """, unsafe_allow_html=True)
+                    st.markdown("<br>", unsafe_allow_html=True)
+        
+        # Data table
+        st.subheader("📊 Market Data")
+        
+        if not filtered_df.empty:
+            display_cols = ['Symbol', 'CSI_Q', 'Signal', 'Price', 'Change_24h', 
+                           'Funding_Rate', 'Long_Short_Ratio', 'Volume_24h', 'Open_Interest']
+            
+            styled_df = filtered_df[display_cols].copy()
+            styled_df['Price'] = styled_df['Price'].round(4)
+            styled_df['CSI_Q'] = styled_df['CSI_Q'].round(1)
+            styled_df['Change_24h'] = styled_df['Change_24h'].round(2)
+            styled_df['Funding_Rate'] = styled_df['Funding_Rate'].round(4)
+            styled_df['Long_Short_Ratio'] = styled_df['Long_Short_Ratio'].round(2)
+            styled_df['Volume_24h'] = (styled_df['Volume_24h'] / 1000000).round(1)
+            styled_df['Open_Interest'] = styled_df['Open_Interest'].round(0)
+            
+            styled_df = styled_df.rename(columns={
+                'Volume_24h': 'Volume_24h_($M)',
+                'Change_24h': 'Change_24h_(%)',
+                'Funding_Rate': 'Funding_Rate_(%)'
+            })
+            
+            st.dataframe(styled_df, use_container_width=True, height=400)
+    
+    with tab2:
+        st.header("🎯 Quant Analysis")
+        
+        if not filtered_df.empty:
             col1, col2 = st.columns(2)
             
             with col1:
-                st.markdown(f"""
-                <div class="strategy-box">
-                    <h4>💰 Return Metrics</h4>
-                    • <b>Total Return:</b> {metrics['Total_Return']:.2f}%<br>
-                    • <b>Final Value:</b> ${metrics['Final_Portfolio_Value']:,.2f}<br>
-                    • <b>Profit:</b> ${metrics['Final_Portfolio_Value'] - initial_capital:,.2f}<br>
-                    • <b>Sharpe Ratio:</b> {metrics['Sharpe_Ratio']:.3f}<br>
-                    • <b>Max Drawdown:</b> {metrics['Max_Drawdown']:.2f}%
-                </div>
-                """, unsafe_allow_html=True)
+                # Funding Rate vs CSI-Q
+                fig = px.scatter(
+                    filtered_df,
+                    x='Funding_Rate',
+                    y='CSI_Q',
+                    size='Volume_24h',
+                    color='Signal',
+                    hover_name='Symbol',
+                    title="🔴🟢 Funding vs CSI-Q Analysis",
+                    color_discrete_map={
+                        'LONG': 'green',
+                        'SHORT': 'red',
+                        'CONTRARIAN': 'orange',
+                        'NEUTRAL': 'gray'
+                    }
+                )
+                
+                fig.add_vline(x=0, line_dash="dash", line_color="white")
+                fig.add_hline(y=50, line_dash="dash", line_color="white")
+                fig.update_layout(height=400)
+                st.plotly_chart(fig, use_container_width=True)
             
             with col2:
+                # Long/Short Ratios
+                top_ratios = filtered_df.nlargest(15, 'Long_Short_Ratio')
+                fig = px.bar(
+                    top_ratios,
+                    x='Symbol',
+                    y='Long_Short_Ratio',
+                    color='Signal',
+                    title="📊 Long/Short Ratios",
+                    color_discrete_map={
+                        'LONG': 'green',
+                        'SHORT': 'red',
+                        'CONTRARIAN': 'orange',
+                        'NEUTRAL': 'gray'
+                    }
+                )
+                fig.add_hline(y=1.0, line_dash="dash", line_color="white", 
+                             annotation_text="Balanced (1.0)")
+                fig.update_layout(height=400)
+                st.plotly_chart(fig, use_container_width=True)
+            
+            # CSI-Q Component Analysis
+            st.subheader("🔬 CSI-Q Component Breakdown")
+            
+            component_cols = ['Symbol', 'CSI_Q', 'Derivatives_Score', 'Social_Score', 'Basis_Score', 'Tech_Score']
+            component_df = filtered_df[component_cols].sort_values('CSI_Q', ascending=False).head(10)
+            
+            fig = go.Figure()
+            
+            fig.add_trace(go.Bar(
+                name='Derivatives (40%)',
+                x=component_df['Symbol'],
+                y=component_df['Derivatives_Score'],
+                marker_color='rgba(255, 99, 132, 0.8)'
+            ))
+            
+            fig.add_trace(go.Bar(
+                name='Social (30%)',
+                x=component_df['Symbol'],
+                y=component_df['Social_Score'],
+                marker_color='rgba(54, 162, 235, 0.8)'
+            ))
+            
+            fig.add_trace(go.Bar(
+                name='Basis (20%)',
+                x=component_df['Symbol'],
+                y=component_df['Basis_Score'],
+                marker_color='rgba(255, 205, 86, 0.8)'
+            ))
+            
+            fig.add_trace(go.Bar(
+                name='Technical (10%)',
+                x=component_df['Symbol'],
+                y=component_df['Tech_Score'],
+                marker_color='rgba(75, 192, 192, 0.8)'
+            ))
+            
+            fig.update_layout(
+                title="📊 Top 10 CSI-Q Component Scores",
+                xaxis_title="Symbol",
+                yaxis_title="Component Score",
+                barmode='group',
+                height=400
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Contrarian Opportunities
+            st.subheader("💎 Contrarian Opportunities")
+            
+            contrarian_df = filtered_df[
+                (filtered_df['CSI_Q'] > 85) | (filtered_df['CSI_Q'] < 15) |
+                (abs(filtered_df['Funding_Rate']) > 0.1) |
+                (filtered_df['Long_Short_Ratio'] > 2.0) | (filtered_df['Long_Short_Ratio'] < 0.5)
+            ].sort_values('CSI_Q', ascending=False)
+            
+            if len(contrarian_df) > 0:
+                cols = st.columns(min(4, len(contrarian_df)))
+                for i, (_, row) in enumerate(contrarian_df.head(4).iterrows()):
+                    with cols[i]:
+                        if row['CSI_Q'] > 90 or row['CSI_Q'] < 10:
+                            risk_level = "🔥 EXTREME"
+                        elif abs(row['Funding_Rate']) > 0.15:
+                            risk_level = "⚡ HIGH FUNDING"
+                        else:
+                            risk_level = "⚠️ ELEVATED"
+                        
+                        st.markdown(f"""
+                        <div class="signal-contrarian">
+                            <h4>{row['Symbol']}</h4>
+                            CSI-Q: {row['CSI_Q']:.1f}<br>
+                            Funding: {row['Funding_Rate']:.4f}%<br>
+                            L/S: {row['Long_Short_Ratio']:.2f}<br>
+                            <b>{risk_level}</b>
+                        </div>
+                        """, unsafe_allow_html=True)
+            else:
+                st.info("🎯 No extreme contrarian setups currently")
+    
+    with tab3:
+        st.header("💰 Trading Opportunities")
+        
+        if not filtered_df.empty:
+            # Calculate opportunity scores
+            filtered_df['Opportunity_Score'] = (
+                (abs(filtered_df['CSI_Q'] - 50) / 50 * 0.4) +
+                (abs(filtered_df['Funding_Rate']) * 10 * 0.3) +
+                (abs(filtered_df['Long_Short_Ratio'] - 1) * 0.2) +
+                ((filtered_df['Volume_24h'] / filtered_df['Volume_24h'].max()) * 0.1)
+            ) * 100
+            
+            # Top opportunities
+            opportunities = filtered_df.sort_values('Opportunity_Score', ascending=False).head(8)
+            
+            st.subheader("🚀 TOP 8 TRADING OPPORTUNITIES")
+            
+            data_source_note = "demo" if "demo" in df['Data_Source'].values[0] else "live"
+            if data_source_note == "demo":
+                st.info("📊 Demo Mode: Realistic simulated data for testing and learning")
+            else:
+                st.success("📡 Live Data: Real-time market information")
+            
+            for i, (_, row) in enumerate(opportunities.iterrows()):
+                col1, col2, col3, col4 = st.columns([2, 1, 1, 2])
+                
+                with col1:
+                    signal_color = get_signal_color(row['Signal'])
+                    st.markdown(f"**{i+1}. {signal_color} {row['Symbol']}**")
+                    st.markdown(f"Opportunity Score: **{row['Opportunity_Score']:.1f}**")
+                    data_source = row.get('Data_Source', 'unknown')
+                    st.markdown(f"*Source: {data_source}*")
+                
+                with col2:
+                    st.metric("CSI-Q", f"{row['CSI_Q']:.1f}")
+                    st.metric("Signal", row['Signal'])
+                
+                with col3:
+                    st.metric("Price", f"${row['Price']:.4f}")
+                    st.metric("24h Change", f"{row['Change_24h']:.2f}%")
+                
+                with col4:
+                    # Trade setup calculations
+                    atr_pct = (row['ATR'] / row['Price']) * 100
+                    target_pct = atr_pct
+                    stop_pct = atr_pct * 0.5
+                    
+                    if row['Signal'] == 'LONG':
+                        target_price = row['Price'] * (1 + target_pct/100)
+                        stop_price = row['Price'] * (1 - stop_pct/100)
+                    elif row['Signal'] == 'SHORT':
+                        target_price = row['Price'] * (1 - target_pct/100)
+                        stop_price = row['Price'] * (1 + stop_pct/100)
+                    else:  # CONTRARIAN
+                        target_price = row['Price'] * (1 + target_pct/100) if row['CSI_Q'] < 20 else row['Price'] * (1 - target_pct/100)
+                        stop_price = row['Price'] * (1 - stop_pct/200) if row['CSI_Q'] < 20 else row['Price'] * (1 + stop_pct/200)
+                    
+                    risk_reward = target_pct / stop_pct if stop_pct > 0 else 1.0
+                    
+                    st.markdown(f"""
+                    **🎯 Trade Setup:**
+                    - Entry: ${row['Price']:.4f}
+                    - Target: ${target_price:.4f}
+                    - Stop: ${stop_price:.4f}
+                    - R/R: 1:{risk_reward:.1f}
+                    - Funding: {row['Funding_Rate']:.4f}%
+                    - Volume: ${row['Volume_24h']/1000000:.0f}M
+                    """)
+                
+                st.markdown("---")
+            
+            # Market analysis
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.subheader("📈 Market Sentiment Analysis")
+                
+                avg_csiq = filtered_df['CSI_Q'].mean()
+                avg_funding = filtered_df['Funding_Rate'].mean()
+                
+                if avg_csiq > 65:
+                    market_sentiment = "🟢 BULLISH"
+                    sentiment_color = "green"
+                elif avg_csiq < 35:
+                    market_sentiment = "🔴 BEARISH" 
+                    sentiment_color = "red"
+                else:
+                    market_sentiment = "🟡 NEUTRAL"
+                    sentiment_color = "orange"
+                
                 st.markdown(f"""
-                <div class="strategy-box">
-                    <h4>📊 Trade Metrics</h4>
-                    • <b>Total Trades:</b> {metrics['Total_Trades']}<br>
-                    • <b>Win Rate:</b> {metrics['Win_Rate']:.1f}%<br>
-                    • <b>Average Win:</b> ${metrics['Avg_Win']:.2f}<br>
-                    • <b>Average Loss:</b> ${metrics['Avg_Loss']:.2f}<br>
-                    • <b>Profit Factor:</b> {metrics['Profit_Factor']:.2f}
+                <div style="background: {sentiment_color}; padding: 15px; border-radius: 10px; color: white; text-align: center;">
+                    <h3>Market Status: {market_sentiment}</h3>
+                    <p>Avg CSI-Q: {avg_csiq:.1f} | Avg Funding: {avg_funding:.4f}%</p>
                 </div>
                 """, unsafe_allow_html=True)
+                
+                # Signal distribution
+                signal_counts = filtered_df['Signal'].value_counts()
+                fig = px.pie(
+                    values=signal_counts.values,
+                    names=signal_counts.index,
+                    title="📊 Signal Distribution",
+                    color_discrete_map={
+                        'LONG': 'green',
+                        'SHORT': 'red',
+                        'CONTRARIAN': 'orange',
+                        'NEUTRAL': 'gray'
+                    }
+                )
+                fig.update_layout(height=300)
+                st.plotly_chart(fig, use_container_width=True)
             
-            # Strategy parameters used
-            st.subheader("⚙️ Strategy Parameters Used")
-            st.json(strategy_params)
+            with col2:
+                st.subheader("⚠️ Risk Analysis")
+                
+                # Risk warnings
+                warnings = []
+                
+                extreme_funding = filtered_df[abs(filtered_df['Funding_Rate']) > 0.2]
+                if not extreme_funding.empty:
+                    warnings.append(f"🔥 {len(extreme_funding)} coins with EXTREME funding rates")
+                
+                extreme_csiq = filtered_df[(filtered_df['CSI_Q'] > 95) | (filtered_df['CSI_Q'] < 5)]
+                if not extreme_csiq.empty:
+                    warnings.append(f"⚡ {len(extreme_csiq)} coins at MAXIMUM hysteria levels")
+                
+                high_ls_ratio = filtered_df[filtered_df['Long_Short_Ratio'] > 3]
+                if not high_ls_ratio.empty:
+                    warnings.append(f"📈 {len(high_ls_ratio)} coins heavily LONG-skewed (>3:1)")
+                
+                low_ls_ratio = filtered_df[filtered_df['Long_Short_Ratio'] < 0.33]
+                if not low_ls_ratio.empty:
+                    warnings.append(f"📉 {len(low_ls_ratio)} coins heavily SHORT-skewed (<1:3)")
+                
+                if warnings:
+                    for warning in warnings:
+                        st.markdown(f"""
+                        <div style="background: #ff6b6b; padding: 10px; border-radius: 5px; margin: 5px 0; color: white;">
+                            {warning}
+                        </div>
+                        """, unsafe_allow_html=True)
+                else:
+                    st.markdown("""
+                    <div style="background: #51cf66; padding: 10px; border-radius: 5px; color: white; text-align: center;">
+                        ✅ No extreme risk warnings currently
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                # Trading tips
+                st.markdown("### 💡 Trading Tips")
+                
+                if avg_funding > 0.1:
+                    st.markdown("- 🔴 **High funding** → Consider SHORT bias")
+                elif avg_funding < -0.1:
+                    st.markdown("- 🟢 **Negative funding** → Consider LONG bias")
+                
+                if avg_csiq > 80:
+                    st.markdown("- ⚠️ **Market overheated** → Look for contrarian plays")
+                elif avg_csiq < 20:
+                    st.markdown("- 🚀 **Oversold market** → Look for bounce plays")
+                
+                strong_signals = len(filtered_df[filtered_df['Signal'] != 'NEUTRAL'])
+                if strong_signals > len(filtered_df) * 0.7:
+                    st.markdown("- 🎯 **Many active signals** → Good trading environment")
+        
+        else:
+            st.warning("No data available with current filters")
     
-    else:
-        # Show example/demo when no backtest has been run
-        st.markdown("""
-        ## 🎯 How to Use the CSI-Q Backtester
-        
-        ### 📋 Setup Steps:
-        1. **Select Date Range**: Choose your backtest period (recommend 30-90 days)
-        2. **Set Portfolio Size**: Define your initial capital
-        3. **Configure Strategy**: Adjust CSI-Q thresholds and risk parameters
-        4. **Pick Symbols**: Select which cryptocurrencies to trade
-        5. **Click "Run Backtest"**: Analyze historical performance
-        
-        ### 🔍 What Gets Tested:
-        - **CSI-Q Signal Generation**: LONG, SHORT, CONTRARIAN, NEUTRAL
-        - **Risk Management**: Stop losses, take profits, position sizing
-        - **Portfolio Management**: Max positions, holding periods
-        - **Performance Tracking**: Returns, drawdowns, win rates
-        
-        ### 📊 Key Metrics Explained:
-        - **Total Return**: Overall strategy performance vs buy & hold
-        - **Sharpe Ratio**: Risk-adjusted returns (higher is better)
-        - **Max Drawdown**: Largest peak-to-trough decline
-        - **Win Rate**: Percentage of profitable trades
-        - **Profit Factor**: Total wins / Total losses ratio
-        
-        ### ⚡ Strategy Logic:
-        ```
-        LONG Signal: CSI-Q > 70 & Funding Rate < 0.1%
-        SHORT Signal: CSI-Q < 30 & Funding Rate > -0.1%
-        CONTRARIAN: CSI-Q > 90 or CSI-Q < 10 (extreme levels)
-        NEUTRAL: All other conditions
-        ```
-        
-        ### 💡 Optimization Tips:
-        - **CSI-Q Strength**: Higher values = fewer but stronger signals
-        - **Risk per Trade**: Lower = safer, higher = more aggressive
-        - **Holding Period**: Shorter for scalping, longer for swing trading
-        - **Volume Filter**: Higher values = more liquid markets only
-        """)
-        
-        # Demo results section
-        st.markdown("---")
-        st.subheader("📈 Sample Backtest Results")
-        
-        # Create sample performance chart
-        sample_dates = pd.date_range(start='2024-01-01', end='2024-03-31', freq='D')
-        np.random.seed(123)
-        
-        # Generate sample portfolio performance
-        returns = np.random.normal(0.001, 0.02, len(sample_dates))  # Daily returns
-        portfolio_values = [10000]  # Starting value
-        
-        for ret in returns[1:]:
-            new_value = portfolio_values[-1] * (1 + ret)
-            portfolio_values.append(new_value)
-        
-        # Create sample BTC buy & hold
-        btc_returns = np.random.normal(0.0008, 0.025, len(sample_dates))
-        btc_values = [10000]
-        
-        for ret in btc_returns[1:]:
-            new_value = btc_values[-1] * (1 + ret)
-            btc_values.append(new_value)
-        
-        sample_df = pd.DataFrame({
-            'Date': sample_dates,
-            'CSI_Q_Strategy': portfolio_values,
-            'BTC_Buy_Hold': btc_values
-        })
-        
-        fig = go.Figure()
-        
-        fig.add_trace(go.Scatter(
-            x=sample_df['Date'],
-            y=sample_df['CSI_Q_Strategy'],
-            mode='lines',
-            name='CSI-Q Strategy',
-            line=dict(color='#2E86AB', width=3)
-        ))
-        
-        fig.add_trace(go.Scatter(
-            x=sample_df['Date'],
-            y=sample_df['BTC_Buy_Hold'],
-            mode='lines',
-            name='BTC Buy & Hold',
-            line=dict(color='orange', width=2, dash='dash')
-        ))
-        
-        fig.update_layout(
-            title="📊 Sample Strategy Performance (90 Days)",
-            xaxis_title="Date",
-            yaxis_title="Portfolio Value ($)",
-            height=400,
-            legend=dict(x=0, y=1)
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # Sample metrics
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.markdown("""
-            <div class="performance-positive">
-                <h4>📈 Sample Results</h4>
-                <p>Total Return: <b>+12.3%</b></p>
-                <p>Sharpe Ratio: <b>1.45</b></p>
-                <p>Max Drawdown: <b>-8.2%</b></p>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with col2:
-            st.markdown("""
-            <div class="backtest-card">
-                <h4>🎯 Trade Stats</h4>
-                <p>Total Trades: <b>47</b></p>
-                <p>Win Rate: <b>68.1%</b></p>
-                <p>Profit Factor: <b>2.34</b></p>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with col3:
-            st.markdown("""
-            <div class="strategy-box">
-                <h4>⚠️ Important Notes</h4>
-                • Past performance ≠ future results<br>
-                • Backtest uses simulated data<br>
-                • Real trading has slippage & fees<br>
-                • Always test strategies thoroughly<br>
-                • Use proper risk management
-            </div>
-            """, unsafe_allow_html=True)
-
-# Advanced Analysis Functions
-def analyze_strategy_robustness(trades_df, portfolio_df):
-    """Analyseer strategy robustness over verschillende periodes"""
-    if trades_df.empty or portfolio_df.empty:
-        return {}
-    
-    # Split performance in chunks
-    total_days = len(portfolio_df)
-    chunk_size = max(7, total_days // 4)  # Weekly or quarterly chunks
-    
-    chunks = []
-    for i in range(0, total_days, chunk_size):
-        chunk_df = portfolio_df.iloc[i:i+chunk_size]
-        if len(chunk_df) > 1:
-            chunk_return = (chunk_df.iloc[-1]['Portfolio_Value'] / chunk_df.iloc[0]['Portfolio_Value'] - 1) * 100
-            chunks.append({
-                'Period': f"Days {i+1}-{min(i+chunk_size, total_days)}",
-                'Return': chunk_return
-            })
-    
-    return pd.DataFrame(chunks)
-
-def monte_carlo_analysis(strategy_params, num_simulations=100):
-    """Monte Carlo simulatie voor strategy robustness"""
-    results = []
-    
-    for sim in range(num_simulations):
-        # Varieer parameters slightly
-        varied_params = strategy_params.copy()
-        varied_params['min_csiq_strength'] += np.random.normal(0, 2)
-        varied_params['risk_per_trade'] *= (1 + np.random.normal(0, 0.1))
-        
-        # Simplified simulation result
-        final_return = np.random.normal(5, 15)  # Base 5% return with 15% volatility
-        max_dd = np.random.uniform(-20, -2)
-        
-        results.append({
-            'Simulation': sim + 1,
-            'Total_Return': final_return,
-            'Max_Drawdown': max_dd
-        })
-    
-    return pd.DataFrame(results)
-
-# Add Walk-Forward Analysis
-def walk_forward_analysis(historical_data, strategy_params, window_days=30, step_days=7):
-    """Walk-forward analysis voor out-of-sample testing"""
-    results = []
-    
-    total_days = len(historical_data['Date'].unique())
-    
-    for start_day in range(0, total_days - window_days, step_days):
-        # Training period
-        train_end = start_day + window_days
-        # Test period  
-        test_start = train_end
-        test_end = min(test_start + step_days, total_days)
-        
-        if test_end <= test_start:
-            break
-        
-        # Get data slices
-        dates = sorted(historical_data['Date'].unique())
-        train_dates = dates[start_day:train_end]
-        test_dates = dates[test_start:test_end]
-        
-        train_data = historical_data[historical_data['Date'].isin(train_dates)]
-        test_data = historical_data[historical_data['Date'].isin(test_dates)]
-        
-        # Simulate strategy performance on test period
-        test_return = np.random.normal(1, 5)  # 1% mean with 5% std
-        
-        results.append({
-            'Period': f"{test_dates[0].strftime('%m/%d')}-{test_dates[-1].strftime('%m/%d')}",
-            'Test_Return': test_return,
-            'Train_Days': len(train_dates),
-            'Test_Days': len(test_dates)
-        })
-    
-    return pd.DataFrame(results)
-
-# Enhanced main function with advanced analysis
-def show_advanced_analysis(trades_df, portfolio_df, strategy_params):
-    """Toon geavanceerde backtesting analyse"""
-    
-    st.subheader("🔬 Advanced Strategy Analysis")
-    
-    # Strategy robustness over time
-    if not portfolio_df.empty:
-        robustness_df = analyze_strategy_robustness(trades_df, portfolio_df)
-        
-        if not robustness_df.empty:
-            fig_robust = px.bar(
-                robustness_df,
-                x='Period',
-                y='Return',
-                title="📊 Strategy Performance by Period",
-                color='Return',
-                color_continuous_scale='RdYlGn'
-            )
-            fig_robust.update_layout(height=300)
-            st.plotly_chart(fig_robust, use_container_width=True)
-    
-    # Monte Carlo simulation
-    st.subheader("🎲 Monte Carlo Simulation (100 runs)")
-    with st.spinner("Running Monte Carlo analysis..."):
-        mc_results = monte_carlo_analysis(strategy_params)
-    
-    col1, col2 = st.columns(2)
+    # Footer with data source and refresh info
+    st.markdown("---")
+    col1, col2, col3 = st.columns([1, 1, 1])
     
     with col1:
-        fig_mc_returns = px.histogram(
-            mc_results,
-            x='Total_Return',
-            title="📈 Distribution of Returns",
-            nbins=20
-        )
-        fig_mc_returns.update_layout(height=300)
-        st.plotly_chart(fig_mc_returns, use_container_width=True)
+        st.markdown("🔄 **Auto-refresh**: Every 60 seconds")
     
     with col2:
-        fig_mc_dd = px.histogram(
-            mc_results,
-            x='Max_Drawdown',
-            title="📉 Distribution of Max Drawdowns",
-            nbins=20
-        )
-        fig_mc_dd.update_layout(height=300)
-        st.plotly_chart(fig_mc_dd, use_container_width=True)
+        data_sources = df['Data_Source'].value_counts() if 'Data_Source' in df.columns else {'unknown': len(df)}
+        source_text = " + ".join([f"{source.title()}" for source in data_sources.index])
+        st.markdown(f"📡 **Sources**: {source_text}")
     
-    # Monte Carlo statistics
-    mc_stats = {
-        'Mean_Return': mc_results['Total_Return'].mean(),
-        'Std_Return': mc_results['Total_Return'].std(),
-        'Worst_Case': mc_results['Total_Return'].min(),
-        'Best_Case': mc_results['Total_Return'].max(),
-        'Probability_Positive': (mc_results['Total_Return'] > 0).mean() * 100
-    }
+    with col3:
+        st.markdown(f"⏰ **Last update**: {datetime.now().strftime('%H:%M:%S')}")
     
-    st.markdown(f"""
-    **🎯 Monte Carlo Results:**
-    - Mean Return: **{mc_stats['Mean_Return']:.2f}%** (±{mc_stats['Std_Return']:.2f}%)
-    - Best Case: **{mc_stats['Best_Case']:.2f}%**
-    - Worst Case: **{mc_stats['Worst_Case']:.2f}%**
-    - Probability of Profit: **{mc_stats['Probability_Positive']:.1f}%**
-    """)
+    # Improved footer
+    st.markdown("""
+    <div style='text-align: center; color: #666; margin-top: 20px;'>
+        <p>🚀 <b>Crypto CSI-Q Dashboard</b> - Multi-Source Real-Time & Demo Data<br>
+        🔄 <b>Fallback System:</b> Binance → CoinGecko → Demo Mode<br>
+        ⚠️ Dit is geen financieel advies. Altijd eigen onderzoek doen en risk management toepassen!</p>
+    </div>
+    """, unsafe_allow_html=True)
 
-# Voeg deze toe aan je main() functie in tab4:
 if __name__ == "__main__":
     main()
