@@ -158,7 +158,7 @@ class CSIQBacktester:
                     tech_score * 0.15
                 )
                 
-                # FIXED: Simple approach to add extreme values
+                # Add extreme values
                 random_val = np.random.random()
                 if random_val < 0.1:  # 10% chance of extreme positive
                     extreme_factor = 30
@@ -472,15 +472,15 @@ class CSIQBacktester:
         }
 
 def main():
-    st.title("📈 CSI-Q Strategy Backtester (FULLY FIXED)")
-    st.markdown("**Historische Performance Analyse** - Nu zonder ValueError!")
+    st.title("📈 CSI-Q Strategy Backtester")
+    st.markdown("**Historische Performance Analyse van CSI-Q Trading Strategy**")
     
     # Sidebar parameters
     st.sidebar.header("🔧 Backtest Parameters")
     
     # Datum range
     end_date = st.sidebar.date_input("End Date", datetime.now().date())
-    start_date = st.sidebar.date_input("Start Date", end_date - timedelta(days=60))  # Shorter default
+    start_date = st.sidebar.date_input("Start Date", end_date - timedelta(days=60))
     
     if start_date >= end_date:
         st.error("Start date moet voor end date liggen!")
@@ -489,13 +489,13 @@ def main():
     # Portfolio parameters
     initial_capital = st.sidebar.number_input("Initial Capital ($)", 1000, 100000, 10000)
     
-    # Strategy parameters - meer agressieve defaults
+    # Strategy parameters
     st.sidebar.subheader("📊 Strategy Settings")
-    min_csiq_strength = st.sidebar.slider("Min CSI-Q Strength", 50, 80, 60)  # Verlaagd
-    risk_per_trade = st.sidebar.slider("Risk per Trade (%)", 1, 15, 5) / 100  # Verhoogd
-    max_position_size = st.sidebar.slider("Max Position Size (%)", 5, 30, 15) / 100  # Verhoogd
-    max_holding_days = st.sidebar.slider("Max Holding Days", 1, 14, 3)  # Korter
-    min_volume = st.sidebar.number_input("Min Volume ($)", 10000, 5000000, 500000)  # Verlaagd
+    min_csiq_strength = st.sidebar.slider("Min CSI-Q Strength", 50, 80, 60)
+    risk_per_trade = st.sidebar.slider("Risk per Trade (%)", 1, 15, 5) / 100
+    max_position_size = st.sidebar.slider("Max Position Size (%)", 5, 30, 15) / 100
+    max_holding_days = st.sidebar.slider("Max Holding Days", 1, 14, 3)
+    min_volume = st.sidebar.number_input("Min Volume ($)", 10000, 5000000, 500000)
     
     # Symbol selection
     all_symbols = ['BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'ADA', 'AVAX', 'DOT', 
@@ -680,3 +680,105 @@ def main():
                     symbol_performance['Win_Rate'] = exit_trades.groupby('Symbol').apply(
                         lambda x: (x['PnL'] > 0).mean() * 100
                     ).round(1)
+                    
+                    st.subheader("📊 Performance by Symbol")
+                    st.dataframe(symbol_performance.sort_values('Total_PnL', ascending=False))
+            else:
+                st.warning("No trades executed during this period")
+        
+        with tab3:
+            st.subheader("🔍 Detailed Performance Metrics")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown(f"""
+                <div class="strategy-box">
+                    <h4>📈 Return Metrics</h4>
+                    <p><b>Total Return:</b> {metrics['Total_Return']:.2f}%</p>
+                    <p><b>Sharpe Ratio:</b> {metrics['Sharpe_Ratio']:.3f}</p>
+                    <p><b>Max Drawdown:</b> {metrics['Max_Drawdown']:.2f}%</p>
+                    <p><b>Final Portfolio Value:</b> ${metrics['Final_Portfolio_Value']:,.2f}</p>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col2:
+                st.markdown(f"""
+                <div class="strategy-box">
+                    <h4>🎯 Trade Metrics</h4>
+                    <p><b>Total Trades:</b> {metrics['Total_Trades']}</p>
+                    <p><b>Win Rate:</b> {metrics['Win_Rate']:.1f}%</p>
+                    <p><b>Average Win:</b> ${metrics['Avg_Win']:.2f}</p>
+                    <p><b>Average Loss:</b> ${metrics['Avg_Loss']:.2f}</p>
+                    <p><b>Profit Factor:</b> {metrics['Profit_Factor']:.2f}</p>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            # Strategy explanation
+            st.markdown("""
+            <div class="strategy-box">
+                <h4>🧠 Strategy Logic</h4>
+                <p><b>Extreme Contrarian:</b> Short bij CSI-Q ≥ 85 (extreme greed), Long bij CSI-Q ≤ 15 (extreme fear)</p>
+                <p><b>Trend Following:</b> Long bij CSI-Q ≥ 70 + positive funding + RSI > 45</p>
+                <p><b>Mean Reversion:</b> Short bij overbought (CSI-Q 55-70 + RSI > 70)</p>
+                <p><b>Risk Management:</b> 8% stop loss, 6% take profit, max 3-5 days holding period</p>
+            </div>
+            """, unsafe_allow_html=True)
+    
+    else:
+        # Show strategy explanation when not running
+        st.markdown("""
+        ## 🎯 CSI-Q Strategy Overview
+        
+        Deze backtester test een geavanceerde cryptocurrency trading strategie gebaseerd op de **Crypto Sentiment Intelligence Quotient (CSI-Q)**.
+        
+        ### 📊 Key Features:
+        - **Multi-timeframe analyse** met extreme sentiment detection
+        - **Risk management** met stop-loss en take-profit orders
+        - **Portfolio diversificatie** over meerdere crypto assets
+        - **Real-time debugging** en performance tracking
+        
+        ### ⚡ Trading Signals:
+        1. **Extreme Contrarian**: Short bij extreme greed (CSI-Q ≥ 85), Long bij extreme fear (CSI-Q ≤ 15)
+        2. **Trend Following**: Long bij sterke bullish sentiment (CSI-Q ≥ 70)
+        3. **Mean Reversion**: Short bij overbought condities in mid-range
+        
+        ### 📈 Performance Metrics:
+        - Total Return & Sharpe Ratio
+        - Maximum Drawdown
+        - Win Rate & Profit Factor
+        - Trade-by-trade analysis
+        
+        **👈 Configureer je parameters in de sidebar en klik "Run Backtest" om te beginnen!**
+        """)
+        
+        # Show example CSI-Q distribution
+        st.subheader("📊 Example CSI-Q Data Distribution")
+        
+        # Generate sample data for demo
+        np.random.seed(42)
+        sample_csiq = []
+        
+        for _ in range(1000):
+            base = np.random.normal(50, 20)
+            if np.random.random() < 0.1:
+                base += np.random.choice([-30, 30])
+            sample_csiq.append(np.clip(base, 0, 100))
+        
+        fig_demo = px.histogram(
+            x=sample_csiq,
+            title="Sample CSI-Q Distribution (Demo Data)",
+            nbins=20,
+            labels={'x': 'CSI-Q Value', 'y': 'Frequency'}
+        )
+        fig_demo.add_vline(x=15, line_dash="dash", line_color="green", 
+                          annotation_text="Extreme Fear (LONG)")
+        fig_demo.add_vline(x=85, line_dash="dash", line_color="red", 
+                          annotation_text="Extreme Greed (SHORT)")
+        fig_demo.add_vrect(x0=30, x1=70, fillcolor="yellow", opacity=0.2, 
+                          annotation_text="Normal Range")
+        
+        st.plotly_chart(fig_demo, use_container_width=True)
+
+if __name__ == "__main__":
+    main()
