@@ -158,11 +158,16 @@ class CSIQBacktester:
                     tech_score * 0.15
                 )
                 
-                # FIXED: Matching choices and probabilities that sum to 1.0
-                extreme_choices = [0, 0, 0, 0, 0, 0, 0.3, -0.3]
-                extreme_probabilities = [0.15, 0.15, 0.15, 0.15, 0.15, 0.15, 0.1, 0.1]
-                extreme_factor = np.random.choice(extreme_choices, p=extreme_probabilities)
-                csiq = np.clip(csiq_raw + extreme_factor * 100, 0, 100)
+                # FIXED: Simple approach to add extreme values
+                random_val = np.random.random()
+                if random_val < 0.1:  # 10% chance of extreme positive
+                    extreme_factor = 30
+                elif random_val < 0.2:  # 10% chance of extreme negative
+                    extreme_factor = -30
+                else:  # 80% chance of no extreme factor
+                    extreme_factor = 0
+                    
+                csiq = np.clip(csiq_raw + extreme_factor, 0, 100)
                 
                 historical_data.append({
                     'Date': date,
@@ -467,8 +472,8 @@ class CSIQBacktester:
         }
 
 def main():
-    st.title("📈 CSI-Q Strategy Backtester (FIXED)")
-    st.markdown("**Historische Performance Analyse** - Nu met werkende trade execution!")
+    st.title("📈 CSI-Q Strategy Backtester (FULLY FIXED)")
+    st.markdown("**Historische Performance Analyse** - Nu zonder ValueError!")
     
     # Sidebar parameters
     st.sidebar.header("🔧 Backtest Parameters")
@@ -675,182 +680,3 @@ def main():
                     symbol_performance['Win_Rate'] = exit_trades.groupby('Symbol').apply(
                         lambda x: (x['PnL'] > 0).mean() * 100
                     ).round(1)
-                    
-                    st.subheader("🏆 Performance by Symbol")
-                    st.dataframe(symbol_performance.sort_values('Total_PnL', ascending=False))
-            else:
-                st.warning("No trades executed - check strategy parameters and debug info")
-        
-        with tab3:
-            # Detailed metrics
-            st.subheader("📈 Detailed Performance Metrics")
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.markdown(f"""
-                <div class="strategy-box">
-                    <h4>💰 Return Metrics</h4>
-                    • <b>Total Return:</b> {metrics['Total_Return']:.2f}%<br>
-                    • <b>Final Value:</b> ${metrics['Final_Portfolio_Value']:,.2f}<br>
-                    • <b>Profit:</b> ${metrics['Final_Portfolio_Value'] - initial_capital:,.2f}<br>
-                    • <b>Sharpe Ratio:</b> {metrics['Sharpe_Ratio']:.3f}<br>
-                    • <b>Max Drawdown:</b> {metrics['Max_Drawdown']:.2f}%
-                </div>
-                """, unsafe_allow_html=True)
-            
-            with col2:
-                st.markdown(f"""
-                <div class="strategy-box">
-                    <h4>📊 Trade Metrics</h4>
-                    • <b>Total Trades:</b> {metrics['Total_Trades']}<br>
-                    • <b>Win Rate:</b> {metrics['Win_Rate']:.1f}%<br>
-                    • <b>Average Win:</b> ${metrics['Avg_Win']:.2f}<br>
-                    • <b>Average Loss:</b> ${metrics['Avg_Loss']:.2f}<br>
-                    • <b>Profit Factor:</b> {metrics['Profit_Factor']:.2f}
-                </div>
-                """, unsafe_allow_html=True)
-            
-            # Strategy parameters used
-            st.subheader("⚙️ Strategy Parameters Used")
-            param_df = pd.DataFrame([
-                {"Parameter": "Min CSI-Q Strength", "Value": strategy_params['min_csiq_strength']},
-                {"Parameter": "Risk per Trade", "Value": f"{strategy_params['risk_per_trade']*100:.1f}%"},
-                {"Parameter": "Max Position Size", "Value": f"{strategy_params['max_position_size']*100:.1f}%"},
-                {"Parameter": "Max Holding Days", "Value": strategy_params['max_holding_days']},
-                {"Parameter": "Min Volume", "Value": f"${strategy_params['min_volume']:,}"},
-            ])
-            st.dataframe(param_df, use_container_width=True)
-            
-            # CSI-Q signal explanation
-            st.subheader("🎯 Signal Logic Explanation")
-            st.markdown("""
-            **Updated CSI-Q Signal Generation:**
-            
-            🔴 **SHORT Signals:**
-            - CSI-Q ≥ 85 (Extreme greed/overbought)
-            - CSI-Q ≤ 70 AND RSI > 70 (Overbought conditions)
-            
-            🟢 **LONG Signals:**  
-            - CSI-Q ≤ 15 (Extreme fear/oversold)
-            - CSI-Q ≥ 30 AND RSI < 30 (Oversold conditions)
-            
-            ⚪ **NEUTRAL:**
-            - All other conditions
-            
-            **Risk Management:**
-            - Stop Loss: 8% from entry price
-            - Take Profit: 6% from entry price  
-            - Max Holding: 3 days (default)
-            - Max Positions: 5 concurrent
-            """)
-    
-    else:
-        # Show instructions when no backtest has been run
-        st.markdown("""
-        ## 🎯 Fixed CSI-Q Backtester - Ready to Trade!
-        
-        ### 🔧 Key Fixes Applied:
-        1. **Fixed Probability Array**: Corrected np.random.choice probabilities to sum to 1.0
-        2. **Improved Signal Generation**: More extreme CSI-Q values (0-100 range)
-        3. **Relaxed Entry Filters**: Lower volume thresholds, better CSI-Q logic
-        4. **Enhanced Position Sizing**: 5% risk per trade (configurable)
-        5. **Shorter Holding Periods**: 3-day maximum (faster turnover)
-        6. **Debug Information**: Track why trades are/aren't being made
-        7. **Realistic Data Generation**: More volatile price movements
-        
-        ### 🚀 Quick Start Guide:
-        1. **Set Date Range**: Start with 30-60 days for testing
-        2. **Choose Symbols**: 5-8 symbols work well
-        3. **Adjust Risk**: 5% risk per trade is aggressive but effective
-        4. **Lower Volume Filter**: Set to $500K for more opportunities
-        5. **Click "Run Backtest"**: Watch the debug info for trade activity
-        
-        ### 📊 What's Different:
-        - **Fixed Random Choice**: No more probability errors
-        - **More Extreme CSI-Q Values**: Better signal generation
-        - **Improved Volume Generation**: More realistic trading opportunities  
-        - **Enhanced Risk Management**: Stop losses and take profits
-        - **Debug Tracking**: See exactly why trades happen (or don't)
-        - **Multiple Signal Types**: LONG, SHORT based on market conditions
-        
-        ### 🎯 Expected Results:
-        With the fixes, you should see:
-        - **10-50 trades** per backtest period
-        - **Mixed performance** (some wins, some losses)
-        - **Detailed trade breakdown** by symbol and signal type
-        - **Clear debug information** showing filter effectiveness
-        """)
-        
-        # Demo visualization
-        st.markdown("---")
-        st.subheader("📈 Sample CSI-Q Distribution (Enhanced)")
-        
-        # Generate sample CSI-Q data to show improvement
-        np.random.seed(42)
-        sample_csiq = []
-        for _ in range(1000):
-            # Generate more extreme values
-            base_value = np.random.normal(50, 25)
-            # FIXED: Matching choices and probabilities that sum to 1.0
-            extreme_choices = [0, 0, 0, 0, 0, 0, 30, -30]
-            extreme_probabilities = [0.15, 0.15, 0.15, 0.15, 0.15, 0.15, 0.1, 0.1]
-            extreme_factor = np.random.choice(extreme_choices, p=extreme_probabilities)
-            csiq = np.clip(base_value + extreme_factor, 0, 100)
-            sample_csiq.append(csiq)
-        
-        fig_demo = px.histogram(
-            x=sample_csiq,
-            title="Enhanced CSI-Q Distribution - More Trading Signals",
-            nbins=30,
-            labels={'x': 'CSI-Q Value', 'y': 'Frequency'}
-        )
-        
-        # Add vertical lines for signal thresholds
-        fig_demo.add_vline(x=15, line_dash="dash", line_color="green", 
-                          annotation_text="LONG Threshold (≤15)")
-        fig_demo.add_vline(x=85, line_dash="dash", line_color="red", 
-                          annotation_text="SHORT Threshold (≥85)")
-        fig_demo.add_vline(x=30, line_dash="dot", line_color="lightgreen", 
-                          annotation_text="LONG Zone (30-45)")
-        fig_demo.add_vline(x=70, line_dash="dot", line_color="lightcoral", 
-                          annotation_text="SHORT Zone (55-70)")
-        
-        fig_demo.update_layout(height=400)
-        st.plotly_chart(fig_demo, use_container_width=True)
-        
-        # Performance expectations
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.markdown("""
-            <div class="performance-positive">
-                <h4>🎯 Expected Trades</h4>
-                <p><b>Entry Signals:</b> 15-40 per month</p>
-                <p><b>Signal Types:</b> LONG, SHORT</p>
-                <p><b>Avg Hold:</b> 1-3 days</p>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with col2:
-            st.markdown("""
-            <div class="backtest-card">
-                <h4>📊 Risk Profile</h4>
-                <p><b>Max Risk:</b> 5% per trade</p>
-                <p><b>Stop Loss:</b> 8%</p>
-                <p><b>Take Profit:</b> 6%</p>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with col3:
-            st.markdown("""
-            <div class="strategy-box">
-                <h4>⚡ Performance Goals</h4>
-                <p><b>Win Rate:</b> 40-60%</p>
-                <p><b>Profit Factor:</b> >1.2</p>
-                <p><b>Max Drawdown:</b> <15%</p>
-            </div>
-            """, unsafe_allow_html=True)
-
-if __name__ == "__main__":
-    main()
