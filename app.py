@@ -96,39 +96,70 @@ class BinanceDataFetcher:
             # Futures prices
             price_url = f"{self.base_url}/fapi/v1/ticker/24hr"
             price_response = requests.get(price_url, timeout=10)
+            
+            if price_response.status_code != 200:
+                st.error(f"Binance API error: {price_response.status_code}")
+                return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+            
             price_data = price_response.json()
+            
+            # Ensure price_data is a list
+            if not isinstance(price_data, list):
+                st.error("Unexpected API response format for prices")
+                return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
             
             # Funding rates
             funding_url = f"{self.base_url}/fapi/v1/premiumIndex"
             funding_response = requests.get(funding_url, timeout=10)
+            
+            if funding_response.status_code != 200:
+                st.error(f"Binance funding API error: {funding_response.status_code}")
+                return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+            
             funding_data = funding_response.json()
             
-            # Open Interest
-            oi_url = f"{self.base_url}/fapi/v1/openInterest"
+            # Ensure funding_data is a list
+            if not isinstance(funding_data, list):
+                st.error("Unexpected API response format for funding")
+                return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
             
-            # Create dataframes
-            prices_df = pd.DataFrame(price_data)
-            funding_df = pd.DataFrame(funding_data)
+            # Create dataframes with proper error handling
+            try:
+                prices_df = pd.DataFrame(price_data)
+                funding_df = pd.DataFrame(funding_data)
+            except Exception as e:
+                st.error(f"Error creating DataFrames: {e}")
+                return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
             
-            # Filter for our tickers
-            prices_df = prices_df[prices_df['symbol'].isin(TICKERS)]
-            funding_df = funding_df[funding_df['symbol'].isin(TICKERS)]
+            # Filter for our tickers if dataframes are not empty
+            if not prices_df.empty:
+                prices_df = prices_df[prices_df['symbol'].isin(TICKERS)]
+            if not funding_df.empty:
+                funding_df = funding_df[funding_df['symbol'].isin(TICKERS)]
             
             # Get OI for each symbol
             oi_data = []
+            oi_url = f"{self.base_url}/fapi/v1/openInterest"
+            
             for ticker in TICKERS:
                 try:
                     oi_response = requests.get(f"{oi_url}?symbol={ticker}", timeout=5)
                     if oi_response.status_code == 200:
                         oi_info = oi_response.json()
-                        oi_data.append({
-                            'symbol': ticker,
-                            'openInterest': float(oi_info.get('openInterest', 0))
-                        })
-                except:
+                        if isinstance(oi_info, dict) and 'openInterest' in oi_info:
+                            oi_data.append({
+                                'symbol': ticker,
+                                'openInterest': float(oi_info.get('openInterest', 0))
+                            })
+                        else:
+                            oi_data.append({'symbol': ticker, 'openInterest': 0})
+                    else:
+                        oi_data.append({'symbol': ticker, 'openInterest': 0})
+                except Exception as e:
+                    st.warning(f"OI error for {ticker}: {e}")
                     oi_data.append({'symbol': ticker, 'openInterest': 0})
             
-            oi_df = pd.DataFrame(oi_data)
+            oi_df = pd.DataFrame(oi_data) if oi_data else pd.DataFrame()
             
             return prices_df, funding_df, oi_df
             
@@ -141,9 +172,20 @@ class BinanceDataFetcher:
         try:
             url = f"{self.spot_url}/api/v3/ticker/24hr"
             response = requests.get(url, timeout=10)
+            
+            if response.status_code != 200:
+                st.error(f"Spot API error: {response.status_code}")
+                return pd.DataFrame()
+            
             data = response.json()
+            
+            if not isinstance(data, list):
+                st.error("Unexpected spot API response format")
+                return pd.DataFrame()
+            
             df = pd.DataFrame(data)
-            return df[df['symbol'].isin(TICKERS)]
+            return df[df['symbol'].isin(TICKERS)] if not df.empty else pd.DataFrame()
+            
         except Exception as e:
             st.error(f"Error fetching spot data: {e}")
             return pd.DataFrame()
@@ -160,17 +202,23 @@ class BinanceDataFetcher:
                     
                     if response.status_code == 200:
                         data = response.json()
-                        if data:
-                            ratio = float(data[0]['longShortRatio'])
-                            ratios.append({'symbol': ticker, 'longShortRatio': ratio})
+                        if isinstance(data, list) and len(data) > 0:
+                            ratio_data = data[0]
+                            if isinstance(ratio_data, dict) and 'longShortRatio' in ratio_data:
+                                ratio = float(ratio_data['longShortRatio'])
+                                ratios.append({'symbol': ticker, 'longShortRatio': ratio})
+                            else:
+                                ratios.append({'symbol': ticker, 'longShortRatio': 1.0})
                         else:
                             ratios.append({'symbol': ticker, 'longShortRatio': 1.0})
                     else:
                         ratios.append({'symbol': ticker, 'longShortRatio': 1.0})
-                except:
+                except Exception as e:
+                    st.warning(f"L/S ratio error for {ticker}: {e}")
                     ratios.append({'symbol': ticker, 'longShortRatio': 1.0})
                     
-            return pd.DataFrame(ratios)
+            return pd.DataFrame(ratios) if ratios else pd.DataFrame()
+            
         except Exception as e:
             st.error(f"Error fetching L/S ratios: {e}")
             return pd.DataFrame()
@@ -188,7 +236,7 @@ def fetch_real_crypto_data():
         ls_ratio_df = fetcher.get_long_short_ratio()
     
     if futures_df.empty:
-        st.error("❌ Failed to fetch data from Binance API")
+        st.error("❌ Failed to fetch futures data from Binance API")
         return pd.DataFrame()
     
     # Process data
@@ -205,71 +253,98 @@ def fetch_real_crypto_data():
                 
             futures_row = futures_row.iloc[0]
             
-            # Basic metrics
-            price = float(futures_row['lastPrice'])
-            change_24h = float(futures_row['priceChangePercent'])
-            volume_24h = float(futures_row['quoteVolume'])
+            # Basic metrics with safe conversion
+            try:
+                price = float(futures_row['lastPrice'])
+                change_24h = float(futures_row['priceChangePercent'])
+                volume_24h = float(futures_row['quoteVolume'])
+                high_24h = float(futures_row['highPrice'])
+                low_24h = float(futures_row['lowPrice'])
+            except (ValueError, KeyError) as e:
+                st.warning(f"Data conversion error for {ticker}: {e}")
+                continue
             
             # Funding rate
             funding_row = funding_df[funding_df['symbol'] == ticker]
-            funding_rate = float(funding_row.iloc[0]['lastFundingRate']) * 100 if not funding_row.empty else 0
+            if not funding_row.empty:
+                try:
+                    funding_rate = float(funding_row.iloc[0]['lastFundingRate']) * 100
+                except (ValueError, KeyError):
+                    funding_rate = 0
+            else:
+                funding_rate = 0
             
             # Open Interest
-            oi_row = oi_df[oi_df['symbol'] == ticker]
-            open_interest = float(oi_row.iloc[0]['openInterest']) if not oi_row.empty else 0
+            oi_row = oi_df[oi_df['symbol'] == ticker] if not oi_df.empty else pd.DataFrame()
+            if not oi_row.empty:
+                try:
+                    open_interest = float(oi_row.iloc[0]['openInterest'])
+                except (ValueError, KeyError):
+                    open_interest = 0
+            else:
+                open_interest = 0
             
             # Calculate OI change (simplified - using volume as proxy)
-            oi_change = min(50, max(-50, np.random.normal(0, 15)))  # Will implement historical OI later
+            oi_change = min(50, max(-50, np.random.normal(0, 15)))
             
             # Long/Short ratio
-            ls_row = ls_ratio_df[ls_ratio_df['symbol'] == ticker]
-            long_short_ratio = float(ls_row.iloc[0]['longShortRatio']) if not ls_row.empty else 1.0
+            ls_row = ls_ratio_df[ls_ratio_df['symbol'] == ticker] if not ls_ratio_df.empty else pd.DataFrame()
+            if not ls_row.empty:
+                try:
+                    long_short_ratio = float(ls_row.iloc[0]['longShortRatio'])
+                except (ValueError, KeyError):
+                    long_short_ratio = 1.0
+            else:
+                long_short_ratio = 1.0
             
             # Spot vs Futures basis
-            spot_row = spot_df[spot_df['symbol'] == ticker]
+            spot_row = spot_df[spot_df['symbol'] == ticker] if not spot_df.empty else pd.DataFrame()
             if not spot_row.empty:
-                spot_price = float(spot_row.iloc[0]['lastPrice'])
-                basis = ((price - spot_price) / spot_price) * 100
+                try:
+                    spot_price = float(spot_row.iloc[0]['lastPrice'])
+                    basis = ((price - spot_price) / spot_price) * 100
+                except (ValueError, KeyError):
+                    basis = 0
             else:
                 basis = 0
             
             # Technical indicators (simplified)
-            rsi = 50 + np.random.normal(0, 15)  # Will implement real RSI calculation
+            rsi = 50 + np.random.normal(0, 15)
             rsi = max(0, min(100, rsi))
             
-            bb_squeeze = np.random.uniform(0, 1)  # Will implement real BB calculation
+            bb_squeeze = np.random.uniform(0, 1)
             
-            # Social metrics (mock for now - will integrate Twitter/Reddit APIs)
-            mentions = max(1, int(volume_24h / 10000000))  # Volume-based proxy
-            sentiment = np.tanh(change_24h / 5)  # Price-based sentiment proxy
+            # Social metrics (mock for now)
+            mentions = max(1, int(volume_24h / 10000000))
+            sentiment = np.tanh(change_24h / 5)
             
             # Calculate CSI-Q components
             
             # 1. Derivatives Score (40%)
             derivatives_score = min(100, max(0,
-                (abs(oi_change) * 2) +  # OI change impact
-                (abs(funding_rate) * 500) +  # Funding rate impact  
-                (abs(long_short_ratio - 1) * 30) +  # L/S imbalance
-                30  # Base score
+                (abs(oi_change) * 2) +
+                (abs(funding_rate) * 500) +
+                (abs(long_short_ratio - 1) * 30) +
+                30
             ))
             
             # 2. Social Score (30%)
             social_score = min(100, max(0,
-                ((sentiment + 1) * 25) +  # Sentiment: -1 to +1 -> 0 to 50
-                (min(mentions, 100) * 0.3) +  # Mentions boost
-                20  # Base score
+                ((sentiment + 1) * 25) +
+                (min(mentions, 100) * 0.3) +
+                20
             ))
             
             # 3. Basis Score (20%) 
             basis_score = min(100, max(0,
-                abs(basis) * 500 + 25  # Basis deviation from spot
+                abs(basis) * 500 + 25
             ))
             
             # 4. Technical Score (10%)
             tech_score = min(100, max(0,
-                (100 - abs(rsi - 50)) * 0.8 +  # RSI mean reversion
-                ((1 - bb_squeeze) * 40) +  # Bollinger squeeze
-                10  # Base score
+                (100 - abs(rsi - 50)) * 0.8 +
+                ((1 - bb_squeeze) * 40) +
+                10
             ))
             
             # Final CSI-Q Score
@@ -280,10 +355,8 @@ def fetch_real_crypto_data():
                 tech_score * 0.1
             )
             
-            # ATR calculation (using high-low from 24h data)
-            high_24h = float(futures_row['highPrice'])
-            low_24h = float(futures_row['lowPrice'])
-            atr = (high_24h - low_24h)  # Simplified ATR
+            # ATR calculation
+            atr = (high_24h - low_24h)
             
             data_list.append({
                 'Symbol': symbol_clean,
@@ -312,15 +385,19 @@ def fetch_real_crypto_data():
             st.warning(f"⚠️ Error processing {ticker}: {e}")
             continue
     
+    if not data_list:
+        st.error("No valid data processed from API responses")
+        return pd.DataFrame()
+    
     return pd.DataFrame(data_list)
 
 def get_signal_type(csiq, funding_rate):
     """Determine signal type based on CSI-Q and funding rate"""
     if csiq > 90 or csiq < 10:
         return "CONTRARIAN"
-    elif csiq > 70 and funding_rate < 0.1:  # Funding not too high
+    elif csiq > 70 and funding_rate < 0.1:
         return "LONG"
-    elif csiq < 30 and funding_rate > -0.1:  # Funding not too negative
+    elif csiq < 30 and funding_rate > -0.1:
         return "SHORT"
     else:
         return "NEUTRAL"
@@ -413,7 +490,7 @@ def main():
         """, unsafe_allow_html=True)
     
     with col4:
-        total_volume = filtered_df['Volume_24h'].sum() / 1000000000  # Convert to billions
+        total_volume = filtered_df['Volume_24h'].sum() / 1000000000 if not filtered_df.empty else 0
         st.markdown(f"""
         <div class="metric-card">
             <h3>💰 Total Volume</h3>
@@ -442,7 +519,7 @@ def main():
                     y=display_df['CSI_Q'],
                     mode='markers+text',
                     marker=dict(
-                        size=np.sqrt(display_df['Volume_24h']) / 100000,  # Size based on volume
+                        size=np.sqrt(display_df['Volume_24h']) / 100000,
                         color=display_df['CSI_Q'],
                         colorscale='RdYlGn',
                         showscale=True,
@@ -530,7 +607,7 @@ def main():
             styled_df['Change_24h'] = styled_df['Change_24h'].round(2)
             styled_df['Funding_Rate'] = styled_df['Funding_Rate'].round(4)
             styled_df['Long_Short_Ratio'] = styled_df['Long_Short_Ratio'].round(2)
-            styled_df['Volume_24h'] = (styled_df['Volume_24h'] / 1000000).round(1)  # Convert to millions
+            styled_df['Volume_24h'] = (styled_df['Volume_24h'] / 1000000).round(1)
             styled_df['Open_Interest'] = styled_df['Open_Interest'].round(0)
             
             # Rename columns for better display
@@ -681,7 +758,7 @@ def main():
                         target_price = row['Price'] * (1 + target_pct/100) if row['CSI_Q'] < 20 else row['Price'] * (1 - target_pct/100)
                         stop_price = row['Price'] * (1 - stop_pct/200) if row['CSI_Q'] < 20 else row['Price'] * (1 + stop_pct/200)
                     
-                    risk_reward = target_pct / stop_pct
+                    risk_reward = target_pct / stop_pct if stop_pct > 0 else 1.0
                     
                     st.markdown(f"""
                     **🎯 LIVE Setup:**
