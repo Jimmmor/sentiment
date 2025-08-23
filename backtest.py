@@ -158,8 +158,9 @@ class CSIQBacktester:
                     tech_score * 0.15
                 )
                 
-                # Verhoog kans op extreme waarden
-                extreme_factor = np.random.choice([0, 0, 0, 0, 0, 0, 0, 0.3, -0.3], p=[0.7, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.075, 0.075])
+                # FIXED: Probabilities that sum to 1.0
+                extreme_probabilities = [0.65, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.025, 0.075]
+                extreme_factor = np.random.choice([0, 0, 0, 0, 0, 0, 0, 0.3, -0.3], p=extreme_probabilities)
                 csiq = np.clip(csiq_raw + extreme_factor * 100, 0, 100)
                 
                 historical_data.append({
@@ -749,12 +750,13 @@ def main():
         ## 🎯 Fixed CSI-Q Backtester - Ready to Trade!
         
         ### 🔧 Key Fixes Applied:
-        1. **Improved Signal Generation**: More extreme CSI-Q values (0-100 range)
-        2. **Relaxed Entry Filters**: Lower volume thresholds, better CSI-Q logic
-        3. **Enhanced Position Sizing**: 5% risk per trade (configurable)
-        4. **Shorter Holding Periods**: 3-day maximum (faster turnover)
-        5. **Debug Information**: Track why trades are/aren't being made
-        6. **Realistic Data Generation**: More volatile price movements
+        1. **Fixed Probability Array**: Corrected np.random.choice probabilities to sum to 1.0
+        2. **Improved Signal Generation**: More extreme CSI-Q values (0-100 range)
+        3. **Relaxed Entry Filters**: Lower volume thresholds, better CSI-Q logic
+        4. **Enhanced Position Sizing**: 5% risk per trade (configurable)
+        5. **Shorter Holding Periods**: 3-day maximum (faster turnover)
+        6. **Debug Information**: Track why trades are/aren't being made
+        7. **Realistic Data Generation**: More volatile price movements
         
         ### 🚀 Quick Start Guide:
         1. **Set Date Range**: Start with 30-60 days for testing
@@ -764,6 +766,7 @@ def main():
         5. **Click "Run Backtest"**: Watch the debug info for trade activity
         
         ### 📊 What's Different:
+        - **Fixed Random Choice**: No more probability errors
         - **More Extreme CSI-Q Values**: Better signal generation
         - **Improved Volume Generation**: More realistic trading opportunities  
         - **Enhanced Risk Management**: Stop losses and take profits
@@ -788,7 +791,9 @@ def main():
         for _ in range(1000):
             # Generate more extreme values
             base_value = np.random.normal(50, 25)
-            extreme_factor = np.random.choice([0, 0, 0, 0, 0, 0, 30, -30], p=[0.75, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05])
+            # FIXED: Use proper probabilities that sum to 1.0
+            extreme_probabilities = [0.65, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.025, 0.075]
+            extreme_factor = np.random.choice([0, 0, 0, 0, 0, 0, 0, 30, -30], p=extreme_probabilities)
             csiq = np.clip(base_value + extreme_factor, 0, 100)
             sample_csiq.append(csiq)
         
