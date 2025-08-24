@@ -541,437 +541,9 @@ def main():
                     </div>
                     """, unsafe_allow_html=True)
     
-    with tab5:
-        st.markdown("### DEEP ANALYSIS TERMINAL")
-        
-        # Asset selection
-        col1, col2, col3 = st.columns([2, 1, 1])
-        
-        with col1:
-            selected_symbol = st.selectbox("SELECT ASSET FOR DEEP ANALYSIS:", df['Symbol'].tolist())
-        
-        with col2:
-            timeframe = st.selectbox("TIMEFRAME:", ["1H", "4H", "1D", "3D", "1W"])
-        
-        with col3:
-            lookback_days = st.slider("LOOKBACK DAYS:", 1, 30, 7)
-        
-        if selected_symbol:
-            # Get selected asset data
-            asset_data = df[df['Symbol'] == selected_symbol].iloc[0]
-            
-            # Generate historical data for analysis
-            np.random.seed(hash(selected_symbol) % 1000)
-            periods = lookback_days * 24 if timeframe == "1H" else lookback_days * 6 if timeframe == "4H" else lookback_days
-            
-            # Create synthetic historical data
-            dates = pd.date_range(end=datetime.now(), periods=periods, freq='1H' if timeframe == "1H" else '4H' if timeframe == "4H" else '1D')
-            
-            # Price evolution
-            price_changes = np.random.normal(0, 0.02, periods)
-            prices = [asset_data['Price']]
-            for change in price_changes[:-1]:
-                prices.append(prices[-1] * (1 + change))
-            prices = prices[::-1]  # Reverse to show progression to current price
-            
-            # CSI-Q evolution
-            csiq_base = asset_data['CSI_Q']
-            csiq_changes = np.random.normal(0, 5, periods)
-            csiq_history = [max(0, min(100, csiq_base + sum(csiq_changes[:i+1]))) for i in range(periods)]
-            
-            # Sentiment evolution
-            sentiment_base = asset_data['Combined_Sentiment']
-            sentiment_changes = np.random.normal(0, 0.1, periods)
-            sentiment_history = [max(-1, min(1, sentiment_base + sum(sentiment_changes[:i+1]))) for i in range(periods)]
-            
-            # Volume evolution
-            volume_changes = np.random.normal(0, 0.3, periods)
-            volumes = [max(0, asset_data['Volume_24h'] * (1 + change)) for change in volume_changes]
-            
-            # Create historical dataframe
-            hist_df = pd.DataFrame({
-                'DateTime': dates,
-                'Price': prices,
-                'CSI_Q': csiq_history,
-                'Sentiment': sentiment_history,
-                'Volume': volumes
-            })
-            
-            # COMPREHENSIVE ANALYSIS LAYOUT
-            st.markdown(f"""
-            <div class="terminal-header">
-                DEEP ANALYSIS: {selected_symbol} | TIMEFRAME: {timeframe} | LOOKBACK: {lookback_days} DAYS
-            </div>
-            """, unsafe_allow_html=True)
-            
-            # Row 1: Current Status & Key Metrics
-            col1, col2, col3, col4 = st.columns(4)
-            
-            with col1:
-                current_signal = asset_data['Signal']
-                signal_color = {'LONG': '#00ff00', 'SHORT': '#ff4444', 'CONTRARIAN': '#ffaa00', 'NEUTRAL': '#888888'}[current_signal]
-                
-                st.markdown(f"""
-                <div class="terminal-metric">
-                    <h3>CURRENT SIGNAL</h3>
-                    <h2 style="color: {signal_color};">{current_signal}</h2>
-                    <p>CSI-Q: {asset_data['CSI_Q']:.1f}</p>
-                </div>
-                """, unsafe_allow_html=True)
-            
-            with col2:
-                price_trend = "UP" if hist_df['Price'].iloc[-1] > hist_df['Price'].iloc[0] else "DOWN"
-                trend_color = "#00ff00" if price_trend == "UP" else "#ff4444"
-                price_change_pct = ((hist_df['Price'].iloc[-1] / hist_df['Price'].iloc[0]) - 1) * 100
-                
-                st.markdown(f"""
-                <div class="terminal-metric">
-                    <h3>PRICE TREND</h3>
-                    <h2 style="color: {trend_color};">{price_trend}</h2>
-                    <p>{price_change_pct:+.2f}% ({lookback_days}D)</p>
-                </div>
-                """, unsafe_allow_html=True)
-            
-            with col3:
-                sentiment_trend = "POSITIVE" if hist_df['Sentiment'].iloc[-1] > hist_df['Sentiment'].iloc[0] else "NEGATIVE"
-                sentiment_color = "#00ff00" if sentiment_trend == "POSITIVE" else "#ff4444"
-                
-                st.markdown(f"""
-                <div class="terminal-metric">
-                    <h3>SENTIMENT TREND</h3>
-                    <h2 style="color: {sentiment_color};">{sentiment_trend}</h2>
-                    <p>{asset_data['Combined_Sentiment']:.3f}</p>
-                </div>
-                """, unsafe_allow_html=True)
-            
-            with col4:
-                csiq_trend = "UP" if hist_df['CSI_Q'].iloc[-1] > hist_df['CSI_Q'].iloc[0] else "DOWN"
-                csiq_trend_color = "#00ff00" if csiq_trend == "UP" else "#ff4444"
-                
-                st.markdown(f"""
-                <div class="terminal-metric">
-                    <h3>CSI-Q TREND</h3>
-                    <h2 style="color: {csiq_trend_color};">{csiq_trend}</h2>
-                    <p>{asset_data['CSI_Q']:.1f}</p>
-                </div>
-                """, unsafe_allow_html=True)
-            
-            # Row 2: Historical Charts
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                # Price & CSI-Q correlation chart
-                fig = make_subplots(
-                    rows=2, cols=1,
-                    shared_xaxes=True,
-                    subplot_titles=("PRICE EVOLUTION", "CSI-Q EVOLUTION"),
-                    vertical_spacing=0.1
-                )
-                
-                # Price chart
-                fig.add_trace(
-                    go.Scatter(x=hist_df['DateTime'], y=hist_df['Price'], 
-                              name='Price', line=dict(color='#00ff41', width=2)),
-                    row=1, col=1
-                )
-                
-                # CSI-Q chart with signal zones
-                fig.add_trace(
-                    go.Scatter(x=hist_df['DateTime'], y=hist_df['CSI_Q'], 
-                              name='CSI-Q', line=dict(color='#ffaa00', width=2)),
-                    row=2, col=1
-                )
-                
-                # Add CSI-Q signal zones
-                fig.add_hline(y=70, line_dash="dash", line_color="#00ff00", line_width=1, row=2, col=1)
-                fig.add_hline(y=30, line_dash="dash", line_color="#ff4444", line_width=1, row=2, col=1)
-                fig.add_hline(y=90, line_dash="dash", line_color="#ffaa00", line_width=1, row=2, col=1)
-                fig.add_hline(y=10, line_dash="dash", line_color="#ffaa00", line_width=1, row=2, col=1)
-                
-                fig.update_layout(
-                    title="PRICE vs CSI-Q CORRELATION ANALYSIS",
-                    height=500,
-                    plot_bgcolor='#111111',
-                    paper_bgcolor='#111111',
-                    font=dict(color='#00ff41', family='Courier New'),
-                    showlegend=False
-                )
-                
-                st.plotly_chart(fig, use_container_width=True)
-            
-            with col2:
-                # Sentiment analysis chart
-                fig = go.Figure()
-                
-                fig.add_trace(go.Scatter(
-                    x=hist_df['DateTime'], 
-                    y=hist_df['Sentiment'],
-                    mode='lines+markers',
-                    name='Sentiment',
-                    line=dict(color='#0088ff', width=2),
-                    marker=dict(size=4)
-                ))
-                
-                fig.add_hline(y=0, line_dash="dash", line_color="#ffffff", line_width=1)
-                fig.add_hline(y=0.5, line_dash="dot", line_color="#00ff00", line_width=1)
-                fig.add_hline(y=-0.5, line_dash="dot", line_color="#ff4444", line_width=1)
-                
-                fig.update_layout(
-                    title="SENTIMENT EVOLUTION ANALYSIS",
-                    xaxis_title="Time",
-                    yaxis_title="Sentiment Score",
-                    height=500,
-                    plot_bgcolor='#111111',
-                    paper_bgcolor='#111111',
-                    font=dict(color='#00ff41', family='Courier New')
-                )
-                
-                st.plotly_chart(fig, use_container_width=True)
-            
-            # Row 3: Correlation & Pattern Analysis
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.markdown("#### CORRELATION MATRIX")
-                
-                # Calculate correlations
-                corr_data = hist_df[['Price', 'CSI_Q', 'Sentiment', 'Volume']].corr()
-                
-                fig = px.imshow(
-                    corr_data,
-                    color_continuous_scale='RdYlGn',
-                    color_continuous_midpoint=0,
-                    title="ASSET CORRELATION MATRIX"
-                )
-                
-                fig.update_layout(
-                    height=300,
-                    plot_bgcolor='#111111',
-                    paper_bgcolor='#111111',
-                    font=dict(color='#00ff41', family='Courier New')
-                )
-                
-                st.plotly_chart(fig, use_container_width=True)
-                
-                # Key correlations
-                price_csiq_corr = hist_df['Price'].corr(hist_df['CSI_Q'])
-                price_sentiment_corr = hist_df['Price'].corr(hist_df['Sentiment'])
-                csiq_sentiment_corr = hist_df['CSI_Q'].corr(hist_df['Sentiment'])
-                
-                st.markdown(f"""
-                <div class="terminal-metric" style="text-align: left;">
-                    <h3>KEY CORRELATIONS</h3>
-                    <p>PRICE ↔ CSI-Q: {price_csiq_corr:.3f}</p>
-                    <p>PRICE ↔ SENTIMENT: {price_sentiment_corr:.3f}</p>
-                    <p>CSI-Q ↔ SENTIMENT: {csiq_sentiment_corr:.3f}</p>
-                </div>
-                """, unsafe_allow_html=True)
-            
-            with col2:
-                st.markdown("#### OPTIMAL TRADE ZONES")
-                
-                # Calculate optimal CSI-Q levels for entries
-                price_returns = hist_df['Price'].pct_change().fillna(0)
-                
-                # Find best performing CSI-Q ranges
-                high_csiq_returns = price_returns[hist_df['CSI_Q'] > 70].mean()
-                low_csiq_returns = price_returns[hist_df['CSI_Q'] < 30].mean()
-                mid_csiq_returns = price_returns[(hist_df['CSI_Q'] >= 30) & (hist_df['CSI_Q'] <= 70)].mean()
-                
-                # Sentiment-based returns
-                bullish_sentiment_returns = price_returns[hist_df['Sentiment'] > 0.3].mean()
-                bearish_sentiment_returns = price_returns[hist_df['Sentiment'] < -0.3].mean()
-                
-                st.markdown(f"""
-                <div class="terminal-metric" style="text-align: left;">
-                    <h3>HISTORICAL PERFORMANCE</h3>
-                    <p>HIGH CSI-Q (>70): {high_csiq_returns*100:.2f}% avg return</p>
-                    <p>LOW CSI-Q (<30): {low_csiq_returns*100:.2f}% avg return</p>
-                    <p>MID CSI-Q (30-70): {mid_csiq_returns*100:.2f}% avg return</p>
-                    <br>
-                    <p>BULLISH SENTIMENT: {bullish_sentiment_returns*100:.2f}% avg return</p>
-                    <p>BEARISH SENTIMENT: {bearish_sentiment_returns*100:.2f}% avg return</p>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                # Optimal entry zones
-                if high_csiq_returns > 0 and asset_data['CSI_Q'] > 70:
-                    optimal_strategy = "MOMENTUM LONG"
-                    confidence = "HIGH"
-                elif low_csiq_returns > 0 and asset_data['CSI_Q'] < 30:
-                    optimal_strategy = "CONTRARIAN LONG"
-                    confidence = "MEDIUM"
-                elif high_csiq_returns < 0 and asset_data['CSI_Q'] > 70:
-                    optimal_strategy = "CONTRARIAN SHORT"
-                    confidence = "HIGH"
-                else:
-                    optimal_strategy = "WAIT FOR SETUP"
-                    confidence = "LOW"
-                
-                strategy_color = "#00ff00" if confidence == "HIGH" else "#ffaa00" if confidence == "MEDIUM" else "#ff4444"
-                
-                st.markdown(f"""
-                <div style="background: {strategy_color}; padding: 15px; border-radius: 4px; color: #000000; text-align: center; font-family: 'Courier New', monospace;">
-                    <h3>OPTIMAL STRATEGY</h3>
-                    <h2>{optimal_strategy}</h2>
-                    <p>CONFIDENCE: {confidence}</p>
-                </div>
-                """, unsafe_allow_html=True)
-            
-            # Row 4: Trade Setup & Risk Analysis
-            st.markdown("#### COMPREHENSIVE TRADE ANALYSIS")
-            
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                st.markdown("**FUTURES DATA ANALYSIS**")
-                
-                # Synthetic futures data
-                futures_premium = np.random.normal(0.02, 0.01)  # 2% avg premium
-                open_interest_change = asset_data['OI_Change']
-                funding_rate = asset_data['Funding_Rate']
-                
-                futures_signal = "BULLISH" if futures_premium > 0 and open_interest_change > 0 else "BEARISH"
-                
-                st.markdown(f"""
-                <div class="terminal-metric" style="text-align: left;">
-                    <p>FUTURES PREMIUM: {futures_premium*100:.2f}%</p>
-                    <p>OI CHANGE: {open_interest_change:.1f}%</p>
-                    <p>FUNDING RATE: {funding_rate:.4f}%</p>
-                    <p>FUTURES SIGNAL: <strong>{futures_signal}</strong></p>
-                </div>
-                """, unsafe_allow_html=True)
-            
-            with col2:
-                st.markdown("**SENTIMENT BREAKDOWN**")
-                
-                st.markdown(f"""
-                <div class="terminal-metric" style="text-align: left;">
-                    <p>TOTAL MENTIONS: {asset_data['Total_Mentions']:,}</p>
-                    <p>COMBINED SENTIMENT: {asset_data['Combined_Sentiment']:.3f}</p>
-                    <p>SOCIAL SCORE: {asset_data['Social_Score']:.1f}/100</p>
-                    <p>SENTIMENT TREND: {sentiment_trend}</p>
-                </div>
-                """, unsafe_allow_html=True)
-            
-            with col3:
-                st.markdown("**RISK ASSESSMENT**")
-                
-                # Calculate risk factors
-                volatility = hist_df['Price'].pct_change().std() * 100
-                csiq_volatility = hist_df['CSI_Q'].std()
-                sentiment_volatility = hist_df['Sentiment'].std()
-                
-                risk_level = "HIGH" if volatility > 5 or csiq_volatility > 15 else "MEDIUM" if volatility > 2 else "LOW"
-                risk_color = "#ff4444" if risk_level == "HIGH" else "#ffaa00" if risk_level == "MEDIUM" else "#00ff00"
-                
-                st.markdown(f"""
-                <div class="terminal-metric" style="text-align: left;">
-                    <p>PRICE VOLATILITY: {volatility:.2f}%</p>
-                    <p>CSI-Q VOLATILITY: {csiq_volatility:.1f}</p>
-                    <p>SENTIMENT VOL: {sentiment_volatility:.3f}</p>
-                    <p style="color: {risk_color};">RISK LEVEL: <strong>{risk_level}</strong></p>
-                </div>
-                """, unsafe_allow_html=True)
-            
-            # Final Trade Recommendation
-            st.markdown("#### FINAL TRADE RECOMMENDATION")
-            
-            # Calculate comprehensive score
-            technical_score = 1 if asset_data['CSI_Q'] > 70 or asset_data['CSI_Q'] < 30 else 0
-            sentiment_score = 1 if abs(asset_data['Combined_Sentiment']) > 0.3 else 0
-            futures_score = 1 if abs(funding_rate) > 0.05 or abs(open_interest_change) > 10 else 0
-            correlation_score = 1 if abs(price_csiq_corr) > 0.5 else 0
-            
-            total_score = technical_score + sentiment_score + futures_score + correlation_score
-            
-            if total_score >= 3:
-                recommendation = "STRONG BUY/SELL"
-                rec_color = "#00ff00"
-            elif total_score >= 2:
-                recommendation = "MODERATE TRADE"
-                rec_color = "#ffaa00" 
-            else:
-                recommendation = "HOLD/WAIT"
-                rec_color = "#ff4444"
-            
-            # Trade setup details
-            current_price = asset_data['Price']
-            atr = current_price * 0.03  # 3% ATR estimate
-            
-            if asset_data['Signal'] == 'LONG':
-                entry_price = current_price
-                target_price = current_price * (1 + 0.08)  # 8% target
-                stop_loss = current_price * (1 - 0.04)     # 4% stop
-                position_size = f"2-3% of portfolio"
-            elif asset_data['Signal'] == 'SHORT':
-                entry_price = current_price
-                target_price = current_price * (1 - 0.08)  # 8% target
-                stop_loss = current_price * (1 + 0.04)     # 4% stop
-                position_size = f"1-2% of portfolio"
-            else:
-                entry_price = current_price
-                target_price = current_price * (1 + 0.05)
-                stop_loss = current_price * (1 - 0.03)
-                position_size = f"1% of portfolio"
-            
-            risk_reward = abs((target_price - entry_price) / (stop_loss - entry_price))
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.markdown(f"""
-                <div style="background: {rec_color}; padding: 20px; border-radius: 4px; color: #000000; text-align: center; font-family: 'Courier New', monospace;">
-                    <h2>RECOMMENDATION: {recommendation}</h2>
-                    <h3>SIGNAL: {asset_data['Signal']}</h3>
-                    <p>CONFIDENCE SCORE: {total_score}/4</p>
-                </div>
-                """, unsafe_allow_html=True)
-            
-            with col2:
-                st.markdown(f"""
-                <div class="terminal-metric" style="text-align: left;">
-                    <h3>TRADE SETUP</h3>
-                    <p>ENTRY: ${entry_price:.4f}</p>
-                    <p>TARGET: ${target_price:.4f}</p>
-                    <p>STOP LOSS: ${stop_loss:.4f}</p>
-                    <p>RISK/REWARD: 1:{risk_reward:.1f}</p>
-                    <p>POSITION SIZE: {position_size}</p>
-                </div>
-                """, unsafe_allow_html=True)
-            
-            # Additional insights
-            st.markdown("#### KEY INSIGHTS & WARNINGS")
-            
-            insights = []
-            
-            if abs(price_csiq_corr) > 0.7:
-                insights.append(f"STRONG PRICE-CSI-Q CORRELATION ({price_csiq_corr:.2f})")
-            
-            if asset_data['CSI_Q'] > 90:
-                insights.append("EXTREME CSI-Q LEVEL - CONTRARIAN OPPORTUNITY")
-            elif asset_data['CSI_Q'] < 10:
-                insights.append("EXTREME LOW CSI-Q - POTENTIAL REVERSAL")
-            
-            if abs(asset_data['Combined_Sentiment']) > 0.6:
-                insights.append(f"EXTREME SENTIMENT LEVEL ({asset_data['Combined_Sentiment']:.2f})")
-            
-            if volatility > 8:
-                insights.append(f"HIGH VOLATILITY WARNING ({volatility:.1f}%)")
-            
-            if not insights:
-                insights.append("NO MAJOR WARNINGS - STANDARD RISK PROFILE")
-            
-            for insight in insights:
-                st.markdown(f"""
-                <div style="background: #2a2a2a; border-left: 4px solid #00ff41; padding: 10px; margin: 5px 0; font-family: 'Courier New', monospace;">
-                    {insight}
-                </div>
-                """, unsafe_allow_html=True)
-    
     st.markdown("---")
     
-    # Main content tabs with terminal styling
+    # Main content tabs with terminal styling - MOVED TO AFTER GRID
     tab1, tab2, tab3, tab4, tab5 = st.tabs(["CSI-Q MONITOR", "SENTIMENT ANALYSIS", "QUANT ANALYSIS", "TRADING OPPORTUNITIES", "DEEP ANALYSIS"])
     
     with tab1:
@@ -979,61 +551,61 @@ def main():
         
         # Trading Signals Panel
         col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        st.markdown("### TRADING SIGNALS ANALYSIS")
         
-        # Enhanced scatter plot with terminal colors
-        fig = go.Figure()
-        
-        colors = {
-            'LONG': '#00ff00',
-            'SHORT': '#ff4444', 
-            'CONTRARIAN': '#ffaa00',
-            'NEUTRAL': '#888888'
-        }
-        
-        for signal in df['Signal'].unique():
-            signal_data = df[df['Signal'] == signal]
-            fig.add_trace(go.Scatter(
-                x=signal_data['Combined_Sentiment'],
-                y=signal_data['CSI_Q'],
-                mode='markers',
-                name=signal,
-                marker=dict(
-                    color=colors[signal],
-                    size=10,
-                    line=dict(width=1, color='#ffffff')
-                ),
-                text=signal_data['Symbol'],
-                hovertemplate="<b>%{text}</b><br>" +
-                            "CSI-Q: %{y:.1f}<br>" +
-                            "Sentiment: %{x:.3f}<br>" +
-                            "Signal: " + signal + "<br>" +
-                            "<extra></extra>"
-            ))
-        
-        fig.add_hline(y=70, line_dash="dash", line_color="#00ff00", line_width=1)
-        fig.add_hline(y=30, line_dash="dash", line_color="#ff4444", line_width=1)
-        fig.add_vline(x=0, line_dash="dash", line_color="#ffffff", line_width=1)
-        
-        fig.update_layout(
-            title="CSI-Q vs SENTIMENT MATRIX",
-            xaxis_title="SENTIMENT SCORE",
-            yaxis_title="CSI-Q SCORE",
-            plot_bgcolor='#111111',
-            paper_bgcolor='#111111',
-            font=dict(color='#00ff41', family='Courier New'),
-            height=400,
-            legend=dict(
-                bgcolor='#1a1a1a',
-                bordercolor='#00ff41',
-                borderwidth=1
+        with col1:
+            st.markdown("### TRADING SIGNALS ANALYSIS")
+            
+            # Enhanced scatter plot with terminal colors
+            fig = go.Figure()
+            
+            colors = {
+                'LONG': '#00ff00',
+                'SHORT': '#ff4444', 
+                'CONTRARIAN': '#ffaa00',
+                'NEUTRAL': '#888888'
+            }
+            
+            for signal in df['Signal'].unique():
+                signal_data = df[df['Signal'] == signal]
+                fig.add_trace(go.Scatter(
+                    x=signal_data['Combined_Sentiment'],
+                    y=signal_data['CSI_Q'],
+                    mode='markers',
+                    name=signal,
+                    marker=dict(
+                        color=colors[signal],
+                        size=10,
+                        line=dict(width=1, color='#ffffff')
+                    ),
+                    text=signal_data['Symbol'],
+                    hovertemplate="<b>%{text}</b><br>" +
+                                "CSI-Q: %{y:.1f}<br>" +
+                                "Sentiment: %{x:.3f}<br>" +
+                                "Signal: " + signal + "<br>" +
+                                "<extra></extra>"
+                ))
+            
+            fig.add_hline(y=70, line_dash="dash", line_color="#00ff00", line_width=1)
+            fig.add_hline(y=30, line_dash="dash", line_color="#ff4444", line_width=1)
+            fig.add_vline(x=0, line_dash="dash", line_color="#ffffff", line_width=1)
+            
+            fig.update_layout(
+                title="CSI-Q vs SENTIMENT MATRIX",
+                xaxis_title="SENTIMENT SCORE",
+                yaxis_title="CSI-Q SCORE",
+                plot_bgcolor='#111111',
+                paper_bgcolor='#111111',
+                font=dict(color='#00ff41', family='Courier New'),
+                height=400,
+                legend=dict(
+                    bgcolor='#1a1a1a',
+                    bordercolor='#00ff41',
+                    borderwidth=1
+                )
             )
-        )
+            
+            st.plotly_chart(fig, use_container_width=True)
         
-        st.plotly_chart(fig, use_container_width=True)
-    
         with col2:
             st.markdown("### PRIORITY ALERTS")
             
@@ -1375,6 +947,279 @@ def main():
                         SYSTEM STATUS: NORMAL
                     </div>
                     """, unsafe_allow_html=True)
+
+    with tab5:
+        st.markdown("### DEEP ANALYSIS TERMINAL")
+        
+        # Asset selection
+        col1, col2, col3 = st.columns([2, 1, 1])
+        
+        with col1:
+            selected_symbol = st.selectbox("SELECT ASSET FOR DEEP ANALYSIS:", df['Symbol'].tolist())
+        
+        with col2:
+            timeframe = st.selectbox("TIMEFRAME:", ["1H", "4H", "1D", "3D", "1W"])
+        
+        with col3:
+            lookback_days = st.slider("LOOKBACK DAYS:", 1, 30, 7)
+        
+        if selected_symbol:
+            # Get selected asset data
+            asset_data = df[df['Symbol'] == selected_symbol].iloc[0]
+            
+            # Generate historical data for analysis
+            np.random.seed(hash(selected_symbol) % 1000)
+            periods = lookback_days * 24 if timeframe == "1H" else lookback_days * 6 if timeframe == "4H" else lookback_days
+            
+            # Create synthetic historical data
+            dates = pd.date_range(end=datetime.now(), periods=periods, freq='1H' if timeframe == "1H" else '4H' if timeframe == "4H" else '1D')
+            
+            # Price evolution
+            price_changes = np.random.normal(0, 0.02, periods)
+            prices = [asset_data['Price']]
+            for change in price_changes[:-1]:
+                prices.append(prices[-1] * (1 + change))
+            prices = prices[::-1]  # Reverse to show progression to current price
+            
+            # CSI-Q evolution
+            csiq_base = asset_data['CSI_Q']
+            csiq_changes = np.random.normal(0, 5, periods)
+            csiq_history = [max(0, min(100, csiq_base + sum(csiq_changes[:i+1]))) for i in range(periods)]
+            
+            # Sentiment evolution
+            sentiment_base = asset_data['Combined_Sentiment']
+            sentiment_changes = np.random.normal(0, 0.1, periods)
+            sentiment_history = [max(-1, min(1, sentiment_base + sum(sentiment_changes[:i+1]))) for i in range(periods)]
+            
+            # Volume evolution
+            volume_changes = np.random.normal(0, 0.3, periods)
+            volumes = [max(0, asset_data['Volume_24h'] * (1 + change)) for change in volume_changes]
+            
+            # Create historical dataframe
+            hist_df = pd.DataFrame({
+                'DateTime': dates,
+                'Price': prices,
+                'CSI_Q': csiq_history,
+                'Sentiment': sentiment_history,
+                'Volume': volumes
+            })
+            
+            # COMPREHENSIVE ANALYSIS LAYOUT
+            st.markdown(f"""
+            <div class="terminal-header">
+                DEEP ANALYSIS: {selected_symbol} | TIMEFRAME: {timeframe} | LOOKBACK: {lookback_days} DAYS
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Row 1: Current Status & Key Metrics
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                current_signal = asset_data['Signal']
+                signal_color = {'LONG': '#00ff00', 'SHORT': '#ff4444', 'CONTRARIAN': '#ffaa00', 'NEUTRAL': '#888888'}[current_signal]
+                
+                st.markdown(f"""
+                <div class="terminal-metric">
+                    <h3>CURRENT SIGNAL</h3>
+                    <h2 style="color: {signal_color};">{current_signal}</h2>
+                    <p>CSI-Q: {asset_data['CSI_Q']:.1f}</p>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col2:
+                price_trend = "UP" if hist_df['Price'].iloc[-1] > hist_df['Price'].iloc[0] else "DOWN"
+                trend_color = "#00ff00" if price_trend == "UP" else "#ff4444"
+                price_change_pct = ((hist_df['Price'].iloc[-1] / hist_df['Price'].iloc[0]) - 1) * 100
+                
+                st.markdown(f"""
+                <div class="terminal-metric">
+                    <h3>PRICE TREND</h3>
+                    <h2 style="color: {trend_color};">{price_trend}</h2>
+                    <p>{price_change_pct:+.2f}% ({lookback_days}D)</p>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col3:
+                sentiment_trend = "POSITIVE" if hist_df['Sentiment'].iloc[-1] > hist_df['Sentiment'].iloc[0] else "NEGATIVE"
+                sentiment_color = "#00ff00" if sentiment_trend == "POSITIVE" else "#ff4444"
+                
+                st.markdown(f"""
+                <div class="terminal-metric">
+                    <h3>SENTIMENT TREND</h3>
+                    <h2 style="color: {sentiment_color};">{sentiment_trend}</h2>
+                    <p>{asset_data['Combined_Sentiment']:.3f}</p>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col4:
+                csiq_trend = "UP" if hist_df['CSI_Q'].iloc[-1] > hist_df['CSI_Q'].iloc[0] else "DOWN"
+                csiq_trend_color = "#00ff00" if csiq_trend == "UP" else "#ff4444"
+                
+                st.markdown(f"""
+                <div class="terminal-metric">
+                    <h3>CSI-Q TREND</h3>
+                    <h2 style="color: {csiq_trend_color};">{csiq_trend}</h2>
+                    <p>{asset_data['CSI_Q']:.1f}</p>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            # Row 2: Historical Charts
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # Price & CSI-Q correlation chart
+                fig = make_subplots(
+                    rows=2, cols=1,
+                    shared_xaxes=True,
+                    subplot_titles=("PRICE EVOLUTION", "CSI-Q EVOLUTION"),
+                    vertical_spacing=0.1
+                )
+                
+                # Price chart
+                fig.add_trace(
+                    go.Scatter(x=hist_df['DateTime'], y=hist_df['Price'], 
+                              name='Price', line=dict(color='#00ff41', width=2)),
+                    row=1, col=1
+                )
+                
+                # CSI-Q chart with signal zones
+                fig.add_trace(
+                    go.Scatter(x=hist_df['DateTime'], y=hist_df['CSI_Q'], 
+                              name='CSI-Q', line=dict(color='#ffaa00', width=2)),
+                    row=2, col=1
+                )
+                
+                # Add CSI-Q signal zones
+                fig.add_hline(y=70, line_dash="dash", line_color="#00ff00", line_width=1, row=2, col=1)
+                fig.add_hline(y=30, line_dash="dash", line_color="#ff4444", line_width=1, row=2, col=1)
+                fig.add_hline(y=90, line_dash="dash", line_color="#ffaa00", line_width=1, row=2, col=1)
+                fig.add_hline(y=10, line_dash="dash", line_color="#ffaa00", line_width=1, row=2, col=1)
+                
+                fig.update_layout(
+                    title="PRICE vs CSI-Q CORRELATION ANALYSIS",
+                    height=500,
+                    plot_bgcolor='#111111',
+                    paper_bgcolor='#111111',
+                    font=dict(color='#00ff41', family='Courier New'),
+                    showlegend=False
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
+            
+            with col2:
+                # Sentiment analysis chart
+                fig = go.Figure()
+                
+                fig.add_trace(go.Scatter(
+                    x=hist_df['DateTime'], 
+                    y=hist_df['Sentiment'],
+                    mode='lines+markers',
+                    name='Sentiment',
+                    line=dict(color='#0088ff', width=2),
+                    marker=dict(size=4)
+                ))
+                
+                fig.add_hline(y=0, line_dash="dash", line_color="#ffffff", line_width=1)
+                fig.add_hline(y=0.5, line_dash="dot", line_color="#00ff00", line_width=1)
+                fig.add_hline(y=-0.5, line_dash="dot", line_color="#ff4444", line_width=1)
+                
+                fig.update_layout(
+                    title="SENTIMENT EVOLUTION ANALYSIS",
+                    xaxis_title="Time",
+                    yaxis_title="Sentiment Score",
+                    height=500,
+                    plot_bgcolor='#111111',
+                    paper_bgcolor='#111111',
+                    font=dict(color='#00ff41', family='Courier New')
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
+            
+            # Row 3: Final Analysis and Recommendations
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("#### CORRELATION ANALYSIS")
+                
+                # Calculate correlations
+                price_csiq_corr = hist_df['Price'].corr(hist_df['CSI_Q'])
+                price_sentiment_corr = hist_df['Price'].corr(hist_df['Sentiment'])
+                csiq_sentiment_corr = hist_df['CSI_Q'].corr(hist_df['Sentiment'])
+                
+                st.markdown(f"""
+                <div class="terminal-metric" style="text-align: left;">
+                    <h3>KEY CORRELATIONS</h3>
+                    <p>PRICE ↔ CSI-Q: {price_csiq_corr:.3f}</p>
+                    <p>PRICE ↔ SENTIMENT: {price_sentiment_corr:.3f}</p>
+                    <p>CSI-Q ↔ SENTIMENT: {csiq_sentiment_corr:.3f}</p>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Risk Assessment
+                volatility = hist_df['Price'].pct_change().std() * 100
+                risk_level = "HIGH" if volatility > 5 else "MEDIUM" if volatility > 2 else "LOW"
+                risk_color = "#ff4444" if risk_level == "HIGH" else "#ffaa00" if risk_level == "MEDIUM" else "#00ff00"
+                
+                st.markdown(f"""
+                <div class="terminal-metric" style="text-align: left;">
+                    <h3>RISK ASSESSMENT</h3>
+                    <p>VOLATILITY: {volatility:.2f}%</p>
+                    <p style="color: {risk_color};">RISK LEVEL: <strong>{risk_level}</strong></p>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col2:
+                st.markdown("#### TRADE RECOMMENDATION")
+                
+                # Calculate comprehensive trade score
+                technical_score = 1 if asset_data['CSI_Q'] > 70 or asset_data['CSI_Q'] < 30 else 0
+                sentiment_score = 1 if abs(asset_data['Combined_Sentiment']) > 0.3 else 0
+                correlation_score = 1 if abs(price_csiq_corr) > 0.5 else 0
+                
+                total_score = technical_score + sentiment_score + correlation_score
+                
+                if total_score >= 2:
+                    recommendation = "STRONG TRADE"
+                    rec_color = "#00ff00"
+                elif total_score >= 1:
+                    recommendation = "MODERATE TRADE"
+                    rec_color = "#ffaa00" 
+                else:
+                    recommendation = "HOLD/WAIT"
+                    rec_color = "#ff4444"
+                
+                st.markdown(f"""
+                <div style="background: {rec_color}; padding: 20px; border-radius: 4px; color: #000000; text-align: center; font-family: 'Courier New', monospace;">
+                    <h2>RECOMMENDATION</h2>
+                    <h3>{recommendation}</h3>
+                    <p>SCORE: {total_score}/3</p>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Trade Setup
+                current_price = asset_data['Price']
+                if asset_data['Signal'] == 'LONG':
+                    target_price = current_price * 1.08
+                    stop_loss = current_price * 0.96
+                elif asset_data['Signal'] == 'SHORT':
+                    target_price = current_price * 0.92
+                    stop_loss = current_price * 1.04
+                else:
+                    target_price = current_price * 1.05
+                    stop_loss = current_price * 0.97
+                
+                risk_reward = abs((target_price - current_price) / (stop_loss - current_price))
+                
+                st.markdown(f"""
+                <div class="terminal-metric" style="text-align: left;">
+                    <h3>TRADE SETUP</h3>
+                    <p>ENTRY: ${current_price:.4f}</p>
+                    <p>TARGET: ${target_price:.4f}</p>
+                    <p>STOP: ${stop_loss:.4f}</p>
+                    <p>R/R: 1:{risk_reward:.1f}</p>
+                    <p>SIGNAL: {asset_data['Signal']}</p>
+                </div>
+                """, unsafe_allow_html=True)
     
     st.markdown("---")
     
@@ -1393,7 +1238,7 @@ def main():
     display_df['Funding_Rate'] = display_df['Funding_Rate'].round(4)
     
     display_df = display_df.rename(columns={
-        'Volume_24h': 'VOL_24H_M$',
+        'Volume_24h': 'VOL_24H_M,
         'Change_24h': 'CHG_24H_%',
         'Funding_Rate': 'FUNDING_%',
         'Combined_Sentiment': 'SENTIMENT'
