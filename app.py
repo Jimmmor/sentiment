@@ -543,8 +543,14 @@ def main():
     
     st.markdown("---")
     
-    # Trading Signals Panel
-    col1, col2 = st.columns([2, 1])
+    # Main content tabs with terminal styling
+    tab1, tab2, tab3, tab4 = st.tabs(["CSI-Q MONITOR", "SENTIMENT ANALYSIS", "QUANT ANALYSIS", "TRADING OPPORTUNITIES"])
+    
+    with tab1:
+        st.markdown("### CSI-Q MONITORING INTERFACE")
+        
+        # Trading Signals Panel
+        col1, col2 = st.columns([2, 1])
     
     with col1:
         st.markdown("### TRADING SIGNALS ANALYSIS")
@@ -600,28 +606,347 @@ def main():
         
         st.plotly_chart(fig, use_container_width=True)
     
-    with col2:
-        st.markdown("### PRIORITY ALERTS")
-        
-        # Generate priority alerts
-        priority_assets = df[
-            (df['Signal'] != 'NEUTRAL') & 
-            ((df['CSI_Q'] > 80) | (df['CSI_Q'] < 20))
-        ].sort_values('CSI_Q', key=lambda x: abs(x - 50), ascending=False)
-        
-        for _, asset in priority_assets.head(8).iterrows():
-            signal_class = f"signal-{asset['Signal'].lower()}"
-            urgency = "HIGH" if abs(asset['CSI_Q'] - 50) > 35 else "MED"
+        with col2:
+            st.markdown("### PRIORITY ALERTS")
             
-            st.markdown(f"""
-            <div class="{signal_class}">
-                <strong>{asset['Symbol']} | {asset['Signal']}</strong><br>
-                CSI-Q: {asset['CSI_Q']:.1f} | URGENCY: {urgency}<br>
-                PRICE: ${asset['Price']:.4f}<br>
-                SENTIMENT: {asset['Combined_Sentiment']:.3f}<br>
-                FUNDING: {asset['Funding_Rate']:.4f}%
+            # Generate priority alerts
+            priority_assets = df[
+                (df['Signal'] != 'NEUTRAL') & 
+                ((df['CSI_Q'] > 80) | (df['CSI_Q'] < 20))
+            ].sort_values('CSI_Q', key=lambda x: abs(x - 50), ascending=False)
+            
+            for _, asset in priority_assets.head(8).iterrows():
+                signal_class = f"signal-{asset['Signal'].lower()}"
+                urgency = "HIGH" if abs(asset['CSI_Q'] - 50) > 35 else "MED"
+                
+                st.markdown(f"""
+                <div class="{signal_class}">
+                    <strong>{asset['Symbol']} | {asset['Signal']}</strong><br>
+                    CSI-Q: {asset['CSI_Q']:.1f} | URGENCY: {urgency}<br>
+                    PRICE: ${asset['Price']:.4f}<br>
+                    SENTIMENT: {asset['Combined_Sentiment']:.3f}<br>
+                    FUNDING: {asset['Funding_Rate']:.4f}%
+                </div>
+                """, unsafe_allow_html=True)
+    
+    with tab2:
+        st.markdown("### SENTIMENT ANALYSIS TERMINAL")
+        
+        if not df.empty:
+            # Sentiment overview
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                bullish_count = len(df[df['Combined_Sentiment'] > 0.2])
+                st.markdown(f"""
+                <div class="terminal-metric">
+                    <h3>BULLISH ASSETS</h3>
+                    <h2>{bullish_count}</h2>
+                </div>
+                """, unsafe_allow_html=True)
+                
+            with col2:
+                bearish_count = len(df[df['Combined_Sentiment'] < -0.2])
+                st.markdown(f"""
+                <div class="terminal-metric">
+                    <h3>BEARISH ASSETS</h3>
+                    <h2>{bearish_count}</h2>
+                </div>
+                """, unsafe_allow_html=True)
+                
+            with col3:
+                neutral_count = len(df[abs(df['Combined_Sentiment']) <= 0.2])
+                st.markdown(f"""
+                <div class="terminal-metric">
+                    <h3>NEUTRAL ASSETS</h3>
+                    <h2>{neutral_count}</h2>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            # Sentiment vs Price Performance
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                fig = px.scatter(
+                    df,
+                    x='Combined_Sentiment',
+                    y='Change_24h',
+                    size='Total_Mentions',
+                    color='CSI_Q',
+                    hover_name='Symbol',
+                    title="SENTIMENT vs PRICE PERFORMANCE",
+                    labels={
+                        'Combined_Sentiment': 'Sentiment Score',
+                        'Change_24h': '24h Change (%)'
+                    },
+                    color_continuous_scale='RdYlGn'
+                )
+                fig.add_vline(x=0, line_dash="dash", line_color="#ffffff")
+                fig.add_hline(y=0, line_dash="dash", line_color="#ffffff")
+                fig.update_layout(
+                    height=400,
+                    plot_bgcolor='#111111',
+                    paper_bgcolor='#111111',
+                    font=dict(color='#00ff41', family='Courier New')
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            
+            with col2:
+                # Top sentiment movers
+                st.markdown("#### TOP SENTIMENT MOVERS")
+                
+                # Most positive
+                st.markdown("**MOST BULLISH:**")
+                bullish_assets = df.nlargest(3, 'Combined_Sentiment')
+                for _, asset in bullish_assets.iterrows():
+                    st.markdown(f"""
+                    <div class="signal-long">
+                        {asset['Symbol']} | SENT: {asset['Combined_Sentiment']:.3f}<br>
+                        MENTIONS: {asset['Total_Mentions']:,}
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                st.markdown("**MOST BEARISH:**")
+                bearish_assets = df.nsmallest(3, 'Combined_Sentiment')
+                for _, asset in bearish_assets.iterrows():
+                    st.markdown(f"""
+                    <div class="signal-short">
+                        {asset['Symbol']} | SENT: {asset['Combined_Sentiment']:.3f}<br>
+                        MENTIONS: {asset['Total_Mentions']:,}
+                    </div>
+                    """, unsafe_allow_html=True)
+    
+    with tab3:
+        st.markdown("### QUANTITATIVE ANALYSIS TERMINAL")
+        
+        if not df.empty:
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # Funding Rate vs CSI-Q
+                fig = px.scatter(
+                    df,
+                    x='Funding_Rate',
+                    y='CSI_Q',
+                    size='Total_Mentions',
+                    color='Combined_Sentiment',
+                    hover_name='Symbol',
+                    title="FUNDING vs CSI-Q MATRIX",
+                    color_continuous_scale='RdYlGn',
+                    color_continuous_midpoint=0
+                )
+                
+                fig.add_vline(x=0, line_dash="dash", line_color="#ffffff")
+                fig.add_hline(y=50, line_dash="dash", line_color="#ffffff")
+                fig.update_layout(
+                    height=400,
+                    plot_bgcolor='#111111',
+                    paper_bgcolor='#111111',
+                    font=dict(color='#00ff41', family='Courier New')
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            
+            with col2:
+                # CSI-Q Component Analysis
+                st.markdown("#### CSI-Q COMPONENT BREAKDOWN")
+                
+                component_df = df[['Symbol', 'CSI_Q', 'Derivatives_Score', 'Social_Score', 'Basis_Score', 'Tech_Score']].head(10)
+                
+                fig = go.Figure()
+                
+                fig.add_trace(go.Bar(
+                    name='DERIVATIVES (35%)',
+                    x=component_df['Symbol'],
+                    y=component_df['Derivatives_Score'],
+                    marker_color='#ff4444'
+                ))
+                
+                fig.add_trace(go.Bar(
+                    name='SOCIAL (35%)',
+                    x=component_df['Symbol'],
+                    y=component_df['Social_Score'],
+                    marker_color='#00ff41'
+                ))
+                
+                fig.add_trace(go.Bar(
+                    name='BASIS (20%)',
+                    x=component_df['Symbol'],
+                    y=component_df['Basis_Score'],
+                    marker_color='#ffaa00'
+                ))
+                
+                fig.add_trace(go.Bar(
+                    name='TECHNICAL (10%)',
+                    x=component_df['Symbol'],
+                    y=component_df['Tech_Score'],
+                    marker_color='#0088ff'
+                ))
+                
+                fig.update_layout(
+                    title="TOP 10 CSI-Q COMPONENTS",
+                    height=400,
+                    barmode='group',
+                    plot_bgcolor='#111111',
+                    paper_bgcolor='#111111',
+                    font=dict(color='#00ff41', family='Courier New'),
+                    legend=dict(bgcolor='#1a1a1a', bordercolor='#00ff41', borderwidth=1)
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
+            
+            # Opportunity scoring
+            st.markdown("#### SENTIMENT-PRICE DIVERGENCES")
+            
+            divergent_df = df[
+                ((df['Combined_Sentiment'] > 0.3) & (df['Change_24h'] < -5)) |
+                ((df['Combined_Sentiment'] < -0.3) & (df['Change_24h'] > 5))
+            ].sort_values('Total_Mentions', ascending=False)
+            
+            if len(divergent_df) > 0:
+                cols = st.columns(min(4, len(divergent_df)))
+                for i, (_, row) in enumerate(divergent_df.head(4).iterrows()):
+                    with cols[i]:
+                        divergence_type = "UNDERVALUED" if row['Combined_Sentiment'] > 0.3 else "OVERVALUED"
+                        
+                        st.markdown(f"""
+                        <div class="signal-contrarian">
+                            <strong>{row['Symbol']}</strong><br>
+                            {divergence_type}<br>
+                            SENT: {row['Combined_Sentiment']:.2f}<br>
+                            PRICE: {row['Change_24h']:.2f}%<br>
+                            DIVERGENCE OPPORTUNITY
+                        </div>
+                        """, unsafe_allow_html=True)
+            else:
+                st.markdown('<p class="status-online">NO MAJOR DIVERGENCES DETECTED</p>', unsafe_allow_html=True)
+    
+    with tab4:
+        st.markdown("### TRADING OPPORTUNITIES TERMINAL")
+        
+        if not df.empty:
+            # Enhanced opportunity scoring
+            df['Opportunity_Score'] = (
+                (abs(df['CSI_Q'] - 50) / 50 * 0.3) +
+                (abs(df['Funding_Rate']) * 10 * 0.25) +
+                (abs(df['Long_Short_Ratio'] - 1) * 0.15) +
+                (abs(df['Combined_Sentiment']) * 0.2) +
+                ((df['Volume_24h'] / df['Volume_24h'].max()) * 0.1)
+            ) * 100
+            
+            # Top opportunities
+            opportunities = df.sort_values('Opportunity_Score', ascending=False).head(8)
+            
+            st.markdown("#### TOP TRADING OPPORTUNITIES")
+            
+            st.markdown("""
+            <div class="terminal-header">
+                ENHANCED DEMO MODE: REALISTIC SIMULATED DATA WITH SENTIMENT ANALYSIS
             </div>
             """, unsafe_allow_html=True)
+            
+            for i, (_, row) in enumerate(opportunities.iterrows()):
+                col1, col2, col3, col4 = st.columns([2, 1, 1, 2])
+                
+                with col1:
+                    st.markdown(f"""
+                    <div class="terminal-metric" style="text-align: left;">
+                        <h3>{i+1}. {row['Symbol']} | {row['Signal']}</h3>
+                        <p>OPPORTUNITY SCORE: {row['Opportunity_Score']:.1f}</p>
+                        <p>SENTIMENT: {row['Combined_Sentiment']:.3f}</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                with col2:
+                    st.metric("CSI-Q", f"{row['CSI_Q']:.1f}")
+                    st.metric("SIGNAL", row['Signal'])
+                
+                with col3:
+                    st.metric("PRICE", f"${row['Price']:.4f}")
+                    st.metric("24H CHG", f"{row['Change_24h']:.2f}%")
+                
+                with col4:
+                    # Trade setup
+                    if row['Signal'] == 'LONG':
+                        setup = "BULLISH SETUP"
+                        target = row['Price'] * 1.05
+                        stop = row['Price'] * 0.98
+                    elif row['Signal'] == 'SHORT':
+                        setup = "BEARISH SETUP"
+                        target = row['Price'] * 0.95
+                        stop = row['Price'] * 1.02
+                    else:
+                        setup = "CONTRARIAN SETUP"
+                        target = row['Price'] * 1.03
+                        stop = row['Price'] * 0.99
+                    
+                    st.markdown(f"""
+                    <div class="terminal-metric" style="text-align: left; font-size: 12px;">
+                        <strong>{setup}</strong><br>
+                        ENTRY: ${row['Price']:.4f}<br>
+                        TARGET: ${target:.4f}<br>
+                        STOP: ${stop:.4f}<br>
+                        FUNDING: {row['Funding_Rate']:.4f}%
+                    </div>
+                    """, unsafe_allow_html=True)
+            
+            # Market analysis
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("#### MARKET OVERVIEW")
+                
+                avg_csiq = df['CSI_Q'].mean()
+                avg_sentiment = df['Combined_Sentiment'].mean()
+                
+                if avg_sentiment > 0.3 and avg_csiq > 65:
+                    market_status = "VERY BULLISH"
+                    status_color = "#00ff00"
+                elif avg_sentiment > 0.1 and avg_csiq > 55:
+                    market_status = "BULLISH"
+                    status_color = "#00ff00"
+                elif avg_sentiment < -0.3 and avg_csiq < 35:
+                    market_status = "VERY BEARISH"
+                    status_color = "#ff4444"
+                elif avg_sentiment < -0.1 and avg_csiq < 45:
+                    market_status = "BEARISH"
+                    status_color = "#ff4444"
+                else:
+                    market_status = "MIXED/NEUTRAL"
+                    status_color = "#ffaa00"
+                
+                st.markdown(f"""
+                <div style="background: {status_color}; padding: 15px; border-radius: 4px; color: #000000; text-align: center; font-family: 'Courier New', monospace;">
+                    <h3>MARKET STATUS: {market_status}</h3>
+                    <p>AVG CSI-Q: {avg_csiq:.1f} | AVG SENTIMENT: {avg_sentiment:.3f}</p>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col2:
+                st.markdown("#### RISK ANALYSIS")
+                
+                warnings = []
+                
+                extreme_csiq = df[(df['CSI_Q'] > 90) | (df['CSI_Q'] < 10)]
+                if not extreme_csiq.empty:
+                    warnings.append(f"{len(extreme_csiq)} EXTREME CSI-Q LEVELS")
+                
+                extreme_funding = df[abs(df['Funding_Rate']) > 0.2]
+                if not extreme_funding.empty:
+                    warnings.append(f"{len(extreme_funding)} EXTREME FUNDING RATES")
+                
+                if warnings:
+                    for warning in warnings:
+                        st.markdown(f"""
+                        <div style="background: #ff4444; padding: 10px; border-radius: 4px; margin: 5px 0; color: #000000; font-family: 'Courier New', monospace;">
+                            WARNING: {warning}
+                        </div>
+                        """, unsafe_allow_html=True)
+                else:
+                    st.markdown("""
+                    <div style="background: #00ff00; padding: 10px; border-radius: 4px; color: #000000; text-align: center; font-family: 'Courier New', monospace;">
+                        SYSTEM STATUS: NORMAL
+                    </div>
+                    """, unsafe_allow_html=True)
     
     st.markdown("---")
     
