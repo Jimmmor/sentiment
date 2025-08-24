@@ -1209,18 +1209,3 @@ def main():
     for col, (label, value) in zip([col1, col2, col3, col4, col5], footer_data):
         with col:
             st.markdown(f"**{label}:** {value}")
-    
-    # Professional disclaimer
-    st.markdown(f"""
-    <div style='text-align: center; background: rgba(255,255,255,0.05); 
-                padding: 20px; border-radius: 15px; margin-top: 20px;'>
-        <h4>🚀 Enhanced Crypto CSI-Q Dashboard v3.0</h4>
-        <p><strong>Data Quality:</strong> <span class="data-quality-indicator {quality_class}"></span> {quality_level.title()} | 
-           <strong>Source:</strong> {data_source.replace('_', ' ').title()} | 
-           <strong>Assets:</strong> {len(df)} loaded</p>
-        <p><strong>Signals Active:</strong> {len(df[df['Signal'] != 'NEUTRAL'])} | 
-           <strong>Total Volume:</strong> ${df['Volume_24h'].sum()/1e9:.1f}B | 
-           <strong>Auto-refresh:</strong> {'Enabled' if auto_refresh else 'Manual'}</p>
-        <p style='font-size: 0.9em; color: #888; margin-top: 15px;'>
-            ⚠️ <em>Professional trading tool for educational purposes. 
-            This analysis uses advanced algorithms but should not be your only
