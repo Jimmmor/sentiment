@@ -1238,8 +1238,7 @@ def main():
     display_df['Funding_Rate'] = display_df['Funding_Rate'].round(4)
     
     display_df = display_df.rename(columns={
-        'Volume_24h': 'VOL_24H_M
-                ,
+        'Volume_24h': 'VOL_24H_M',
         'Change_24h': 'CHG_24H_%',
         'Funding_Rate': 'FUNDING_%',
         'Combined_Sentiment': 'SENTIMENT'
